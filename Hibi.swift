@@ -855,6 +855,40 @@ final class PomodoroState: ObservableObject {
 
 // MARK: - UI
 
+/// Height math for the panel's scrolling list area.
+///
+/// The list *must* be given a definite height. Inside `MenuBarExtra(.window)`
+/// SwiftUI proposes an unspecified height to the content, and a `ScrollView` has
+/// no intrinsic height of its own — it resolves to 0. A bare
+/// `.frame(maxHeight:)` is only a ceiling, so nothing stops the collapse: the
+/// panel then opens showing the header, quick-add bar and toolbar with *no
+/// visible list*, even though the rows were laid out normally inside it (a
+/// 305x212 DocumentView sitting in a 320x0 HostingScrollView). Feeding the
+/// measured content height back in as a definite `.frame(height:)` gives the
+/// window something concrete to size itself to.
+enum PanelLayout {
+    /// Tallest the list may grow before it starts scrolling instead.
+    static let maxListHeight: CGFloat = 360
+
+    /// Floor used before the first measurement lands (and as a guard against a
+    /// degenerate 0). Roughly the height of the "今天没有待办 🎉" empty state, so
+    /// the pre-measurement frame is never taller than the real content.
+    static let minListHeight: CGFloat = 68
+
+    static func listHeight(contentHeight: CGFloat) -> CGFloat {
+        guard contentHeight > 0 else { return minListHeight }
+        return min(max(contentHeight, minListHeight), maxListHeight)
+    }
+}
+
+/// Carries the measured height of the list content out of the `ScrollView`.
+private struct ListContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct PanelView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var pomodoro: PomodoroState
@@ -863,6 +897,7 @@ struct PanelView: View {
     @State private var eventMonitor: Any?
     @State private var hoveringId: UUID?
     @State private var showHelp: Bool = false
+    @State private var listContentHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -886,8 +921,16 @@ struct PanelView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: ListContentHeightKey.self, value: proxy.size.height)
+                    }
+                )
             }
-            .frame(maxHeight: 360)
+            .frame(height: PanelLayout.listHeight(contentHeight: listContentHeight))
+            .onPreferenceChange(ListContentHeightKey.self) { height in
+                listContentHeight = height
+            }
             Divider()
             quickAddBar
             Divider()
@@ -1759,6 +1802,24 @@ enum SelfTest {
             check("legacy file on disk: rewritten to bare 本周 if changed, else left parseable", legacyOnDisk?.contains("b") ?? false)
 
             try? FileManager.default.removeItem(at: tmpDir)
+        }
+
+        // 8. PanelLayout: the list area always resolves to a definite, non-zero
+        //    height — a 0 here is exactly the MenuBarExtra collapse this guards against.
+        do {
+            check("layout: unmeasured content falls back to the floor",
+                  PanelLayout.listHeight(contentHeight: 0) == PanelLayout.minListHeight)
+            check("layout: negative/degenerate content falls back to the floor",
+                  PanelLayout.listHeight(contentHeight: -12) == PanelLayout.minListHeight)
+            check("layout: short content is raised to the floor",
+                  PanelLayout.listHeight(contentHeight: 20) == PanelLayout.minListHeight)
+            check("layout: ordinary content is used verbatim",
+                  PanelLayout.listHeight(contentHeight: 212) == 212)
+            check("layout: tall content is capped so the list scrolls",
+                  PanelLayout.listHeight(contentHeight: 900) == PanelLayout.maxListHeight)
+            check("layout: never returns zero",
+                  [CGFloat(0), -1, 1, 67, 68, 359, 360, 361, 10_000]
+                      .allSatisfy { PanelLayout.listHeight(contentHeight: $0) > 0 })
         }
 
         print(allPass ? "ALL PASS" : "SOME FAILED")
