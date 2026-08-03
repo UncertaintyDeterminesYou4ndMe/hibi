@@ -662,11 +662,12 @@ enum PomodoroPhase: Equatable {
 @MainActor
 enum PomodoroSettlement {
     /// Minutes to credit for a focus session ending either by running out naturally
-    /// (full `PomodoroState.focusMinutes`) or by being stopped early (the whole minutes
-    /// actually ticked down, floored; a partial minute is discarded).
-    static func minutesToCredit(elapsedSeconds: Int, completedNaturally: Bool) -> Int {
+    /// (full `sessionMinutes`, the preset chosen for this session) or by being stopped
+    /// early (the whole minutes actually ticked down, floored; a partial minute is
+    /// discarded).
+    static func minutesToCredit(elapsedSeconds: Int, completedNaturally: Bool, sessionMinutes: Int) -> Int {
         if completedNaturally {
-            return PomodoroState.focusMinutes
+            return sessionMinutes
         }
         return max(0, elapsedSeconds / 60)
     }
@@ -686,11 +687,21 @@ enum PomodoroSettlement {
 
 @MainActor
 final class PomodoroState: ObservableObject {
-    static let focusMinutes = 40
+    static let focusPresets = [5, 15, 30, 40]
     static let breakMinutes = 10
+
+    private static let focusMinutesDefaultsKey = "hibi.focusMinutes"
 
     @Published private(set) var phase: PomodoroPhase = .idle
     @Published private(set) var remainingSeconds: Int = 0
+
+    /// Last-chosen focus preset (minutes), persisted across launches so the next
+    /// implicit `start()`/`startFocus()` (no explicit `minutes:`) reuses it.
+    @Published var selectedFocusMinutes: Int
+
+    /// Total minutes of the focus session currently running (or most recently run),
+    /// used to compute elapsed time and to credit a naturally-completed session.
+    private var sessionFocusMinutes: Int = 0
 
     /// Task this focus session is bound to (nil = free/unbound focus, v2 behavior: no
     /// duration is tracked). Cleared whenever a session ends (naturally or via stop).
@@ -705,6 +716,8 @@ final class PomodoroState: ObservableObject {
     private var notificationsAuthorized = false
 
     init() {
+        let stored = UserDefaults.standard.integer(forKey: Self.focusMinutesDefaultsKey)
+        selectedFocusMinutes = Self.focusPresets.contains(stored) ? stored : 40
         requestAuthorization()
     }
 
@@ -725,25 +738,29 @@ final class PomodoroState: ObservableObject {
     /// Starts a free focus session, not bound to any task (v2 behavior — no duration
     /// tracked). If a session is already running for another (bound or free) task, it
     /// is settled first.
-    func start() {
-        beginFocus(taskId: nil, tier: nil, text: nil)
+    func start(minutes: Int? = nil) {
+        beginFocus(taskId: nil, tier: nil, text: nil, minutes: minutes)
     }
 
     /// Starts a focus session bound to a specific task. If a session is already
     /// running, it is settled first (see PomodoroSettlement).
-    func startFocus(taskId: UUID, tier: Tier, text: String) {
-        beginFocus(taskId: taskId, tier: tier, text: text)
+    func startFocus(taskId: UUID, tier: Tier, text: String, minutes: Int? = nil) {
+        beginFocus(taskId: taskId, tier: tier, text: text, minutes: minutes)
     }
 
-    private func beginFocus(taskId: UUID?, tier: Tier?, text: String?) {
+    private func beginFocus(taskId: UUID?, tier: Tier?, text: String?, minutes: Int?) {
         if phase == .focus || phase == .paused {
             settle(naturalCompletion: false)
         }
+        let chosenMinutes = minutes ?? selectedFocusMinutes
+        selectedFocusMinutes = chosenMinutes
+        UserDefaults.standard.set(chosenMinutes, forKey: Self.focusMinutesDefaultsKey)
+        sessionFocusMinutes = chosenMinutes
         boundTaskId = taskId
         boundTaskTier = tier
         boundTaskText = text
         phase = .focus
-        remainingSeconds = Self.focusMinutes * 60
+        remainingSeconds = chosenMinutes * 60
         startTimer()
     }
 
@@ -786,8 +803,8 @@ final class PomodoroState: ObservableObject {
     /// No-op for a free (unbound) session. Does not touch phase/timer state.
     private func settle(naturalCompletion: Bool) {
         guard let text = boundTaskText, let tier = boundTaskTier else { return }
-        let elapsed = Self.focusMinutes * 60 - remainingSeconds
-        let minutes = PomodoroSettlement.minutesToCredit(elapsedSeconds: elapsed, completedNaturally: naturalCompletion)
+        let elapsed = sessionFocusMinutes * 60 - remainingSeconds
+        let minutes = PomodoroSettlement.minutesToCredit(elapsedSeconds: elapsed, completedNaturally: naturalCompletion, sessionMinutes: sessionFocusMinutes)
         if minutes > 0 {
             onSettle?(text, tier, minutes)
         }
@@ -812,7 +829,7 @@ final class PomodoroState: ObservableObject {
             case .focus:
                 settle(naturalCompletion: true)
                 clearBinding()
-                notifyAndChime(title: "专注结束", body: "休息 10 分钟")
+                notifyAndChime(title: "专注结束", body: "休息 \(Self.breakMinutes) 分钟")
                 phase = .breakTime
                 remainingSeconds = Self.breakMinutes * 60
             case .breakTime:
@@ -1016,7 +1033,11 @@ struct PanelView: View {
                     onTagTap: { tag in appState.toggleTagFilter(tag) }
                 )
                 .contextMenu {
-                    Button("开始专注") { pomodoro.startFocus(taskId: item.id, tier: tier, text: item.text) }
+                    Menu("开始专注") {
+                        ForEach(PomodoroState.focusPresets, id: \.self) { m in
+                            Button("\(m) 分钟") { pomodoro.startFocus(taskId: item.id, tier: tier, text: item.text, minutes: m) }
+                        }
+                    }
                     Menu("象限") {
                         Button("重要且紧急") { appState.setQuadrant(item.id, .q1, in: tier) }
                         Button("重要不紧急") { appState.setQuadrant(item.id, .q2, in: tier) }
@@ -1139,7 +1160,8 @@ struct PanelView: View {
                 "右键任务可改象限/移动层级",
             ])
             helpSection(title: "专注", lines: [
-                "悬停任务点 ▶ 为它计时 · 40 分钟专注 + 10 分钟休息 · 时长自动记到任务上",
+                "悬停任务点 ▶ 为它计时 · 右键可选 5/15/30/40 分钟 · 时长自动记到任务上",
+                "到时提醒：系统通知 + 提示音",
             ])
         }
         .padding(10)
@@ -1314,10 +1336,15 @@ struct PomodoroControl: View {
         HStack(spacing: 6) {
             switch pomodoro.phase {
             case .idle:
-                Button(action: { pomodoro.start() }) {
+                Menu {
+                    ForEach(PomodoroState.focusPresets, id: \.self) { m in
+                        Button("\(m) 分钟") { pomodoro.start(minutes: m) }
+                    }
+                } label: {
                     Label("开始专注", systemImage: "play.fill")
                 }
-                .buttonStyle(.plain)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
 
             case .focus:
                 if let taskText = pomodoro.boundTaskText {
@@ -1521,12 +1548,14 @@ enum SelfTest {
             let afterNoMatch = PomodoroSettlement.applyCredit(to: items, matchingText: "不存在的任务", minutesToAdd: 99)
             check("settlement: no match leaves items unchanged", afterNoMatch == items)
 
-            check("settlement: natural completion credits full focus length",
-                  PomodoroSettlement.minutesToCredit(elapsedSeconds: 123, completedNaturally: true) == PomodoroState.focusMinutes)
+            check("settlement: natural completion credits full session length",
+                  PomodoroSettlement.minutesToCredit(elapsedSeconds: 123, completedNaturally: true, sessionMinutes: 40) == 40)
+            check("settlement: natural completion honors a non-default preset",
+                  PomodoroSettlement.minutesToCredit(elapsedSeconds: 300, completedNaturally: true, sessionMinutes: 5) == 5)
             check("settlement: early stop floors to whole minutes",
-                  PomodoroSettlement.minutesToCredit(elapsedSeconds: 125, completedNaturally: false) == 2)
+                  PomodoroSettlement.minutesToCredit(elapsedSeconds: 125, completedNaturally: false, sessionMinutes: 40) == 2)
             check("settlement: sub-minute early stop discarded",
-                  PomodoroSettlement.minutesToCredit(elapsedSeconds: 59, completedNaturally: false) == 0)
+                  PomodoroSettlement.minutesToCredit(elapsedSeconds: 59, completedNaturally: false, sessionMinutes: 40) == 0)
         }
 
         // 3d. #tag parsing / extraction / canonical serialize order.

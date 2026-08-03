@@ -8,7 +8,8 @@ A tiny, fast macOS menu bar todo app backed by a single plain Markdown file. No 
 
 - Menu bar todo list with three time horizons: **Today**, **3-Day**, and **Week**
 - Eisenhower quadrant markers (`!1`–`!4`) for prioritizing tasks by importance/urgency
-- Task-bound Pomodoro timer (40 min focus / 10 min break) with automatic per-task time tracking
+- Task-bound Pomodoro timer with a selectable focus length (5/15/30/40 min, remembers your last pick) and a 10 min break, with automatic per-task time tracking
+- Focus/break-end reminders: a system notification + chime
 - Tags (`#tag`) with click-to-filter, deterministic per-tag colors
 - Everything stored in a plain Markdown file (`~/todos.md`) — open it in any editor, sync it with any tool, edit it by hand
 - Automatic date rollover: completed tasks are archived, unfinished tasks carry forward
@@ -98,7 +99,7 @@ Both suffix markers only count at the very end of the line (in either relative o
 | `⌘↩` (Command+Return) | Add to Week |
 
 - Click a tag chip to filter all three sections down to that tag; click again (or the `✕` in the filter bar) to clear.
-- Hover a task row: `▶` starts a bound 40-minute focus session for that task, `×` deletes it.
+- Hover a task row: `▶` starts a bound focus session for that task (using your last-picked length), `×` deletes it.
 - Right-click a task: start focus, set/clear quadrant, move it to another tier, or delete.
 - Bottom toolbar: **Open File** (opens `~/todos.md` in your default editor), `?` (quick usage popover), **Quit**.
 
@@ -116,4 +117,4 @@ Runs a suite of built-in assertions with no GUI, using only temp directories —
 
 ## 中文说明
 
-Hibi（日々，"日复一日"）是一个纯 SwiftUI 实现的 macOS 菜单栏待办应用，零第三方依赖、单文件源码，数据完全保存在 `~/todos.md` 这个纯 Markdown 文件里，可以用任意编辑器直接打开修改。核心能力包括：今日/三日/本周三档时间层级、四象限优先级标记、绑定任务的番茄钟（专注 40 分钟 + 休息 10 分钟，自动记录每个任务的累计专注时长）、标签筛选。构建方式见上文 **Build from source**（`bash build.sh` 产出 `Hibi.app`），首次打开因为是 ad-hoc 签名需要按上文 **Gatekeeper** 一节右键打开。数据文件格式、四象限/标签/专注时长标记的具体语法见上文 **Data format**，快捷键见 **Keyboard shortcuts / interaction**，自测方式见 **Self-test**。
+Hibi（日々，"日复一日"）是一个纯 SwiftUI 实现的 macOS 菜单栏待办应用，零第三方依赖、单文件源码，数据完全保存在 `~/todos.md` 这个纯 Markdown 文件里，可以用任意编辑器直接打开修改。核心能力包括：今日/三日/本周三档时间层级、四象限优先级标记、绑定任务的番茄钟（专注时长可选 5/15/30/40 分钟，自动记住上次选择 + 休息 10 分钟，自动记录每个任务的累计专注时长；专注/休息到时会发系统通知 + 提示音）、标签筛选。构建方式见上文 **Build from source**（`bash build.sh` 产出 `Hibi.app`），首次打开因为是 ad-hoc 签名需要按上文 **Gatekeeper** 一节右键打开。数据文件格式、四象限/标签/专注时长标记的具体语法见上文 **Data format**，快捷键见 **Keyboard shortcuts / interaction**，自测方式见 **Self-test**。
