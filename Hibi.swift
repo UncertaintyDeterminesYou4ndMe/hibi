@@ -685,6 +685,15 @@ enum PomodoroSettlement {
     }
 }
 
+/// Lets local notifications show as banners even while Hibi is the active app.
+final class ForegroundNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+}
+
 @MainActor
 final class PomodoroState: ObservableObject {
     static let focusPresets = [5, 15, 30, 40]
@@ -714,6 +723,7 @@ final class PomodoroState: ObservableObject {
 
     private var timer: Timer?
     private var notificationsAuthorized = false
+    private let notificationDelegate = ForegroundNotificationDelegate()
 
     init() {
         let stored = UserDefaults.standard.integer(forKey: Self.focusMinutesDefaultsKey)
@@ -722,7 +732,12 @@ final class PomodoroState: ObservableObject {
     }
 
     private func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+        let center = UNUserNotificationCenter.current()
+        // Without a delegate, macOS suppresses banners while the app is frontmost
+        // (i.e. whenever the menu bar panel is open), so a focus session ending
+        // while the user is watching the countdown would show nothing.
+        center.delegate = notificationDelegate
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
             Task { @MainActor in
                 self?.notificationsAuthorized = granted
             }
@@ -846,6 +861,7 @@ final class PomodoroState: ObservableObject {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
+            content.sound = .default
             let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request)
         }
@@ -919,8 +935,8 @@ struct PanelView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 6)
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(key: ListContentHeightKey.self, value: proxy.size.height)
@@ -937,8 +953,6 @@ struct PanelView: View {
             bottomToolbar
         }
         .frame(width: 320)
-        .fontDesign(.rounded)
-        .background(.ultraThinMaterial)
         .onAppear {
             appState.reloadFromDisk()
             installEventMonitor()
@@ -954,32 +968,31 @@ struct PanelView: View {
     // MARK: Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("今日")
-                        .font(.system(size: 17, weight: .semibold))
-                    Text(DateUtil.headerDisplay(for: appState.data.todayDate))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("今日")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(DateUtil.headerDisplay(for: appState.data.todayDate))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
                 if appState.activeTagFilter != nil {
                     ProgressRing(completed: appState.filteredTodayCompletedCount, total: appState.filteredTodayTotalCount)
                 } else {
                     ProgressRing(completed: appState.todayCompletedCount, total: appState.todayTotalCount)
                 }
             }
-            if let tag = appState.activeTagFilter {
-                filterBar(tag)
-            }
-            HStack {
-                Spacer()
+            HStack(spacing: 8) {
+                if let tag = appState.activeTagFilter {
+                    filterBar(tag)
+                }
+                Spacer(minLength: 0)
                 PomodoroControl(pomodoro: pomodoro)
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
     }
 
     private func filterBar(_ tag: String) -> some View {
@@ -1057,11 +1070,12 @@ struct PanelView: View {
     }
 
     private func sectionView(tier: Tier, items: [TodoItem], title: String?, moveTargets: [(Tier, String)]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 1) {
             if let title = title {
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
                     .padding(.bottom, 2)
             }
             ForEach(TodoSort.sorted(items)) { item in
@@ -1121,15 +1135,20 @@ struct PanelView: View {
     }
 
     private var quickAddBar: some View {
-        TextField(quickAddPlaceholder, text: $quickAddText)
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
-            .focused($quickAddFocused)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .onSubmit {
-                submitQuickAdd(to: .today)
-            }
+        HStack(spacing: 8) {
+            Image(systemName: "plus.circle")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+            TextField(quickAddPlaceholder, text: $quickAddText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .focused($quickAddFocused)
+                .onSubmit {
+                    submitQuickAdd(to: .today)
+                }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
     }
 
     private func installEventMonitor() {
@@ -1253,20 +1272,26 @@ struct TodoRow: View {
         return m > 0 ? "⏱ \(h)h\(m)m" : "⏱ \(h)h"
     }
 
+    /// Width reserved for the trailing action buttons. Always laid out (just
+    /// transparent when not hovering) so revealing them never re-wraps the text
+    /// and shifts the row.
+    private static let actionSlotWidth: CGFloat = 40
+
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Button(action: onToggle) {
                 Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
                     .foregroundStyle(circleColor)
             }
             .buttonStyle(.plain)
 
             Text(item.text)
                 .font(.system(size: 13))
-                .lineSpacing(2)
                 .strikethrough(item.done)
                 .foregroundStyle(item.done ? .secondary : .primary)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
 
             ForEach(item.tags, id: \.self) { tag in
                 TagChip(tag: tag, dimmed: item.done, onTap: { onTagTap(tag) })
@@ -1279,29 +1304,36 @@ struct TodoRow: View {
                     .monospacedDigit()
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            if isFocusing {
-                Image(systemName: "timer")
-                    .foregroundStyle(.secondary)
-                    .font(.system(size: 11))
-            } else if isHovering {
-                Button(action: onStartFocus) {
-                    Image(systemName: "play.circle")
+            HStack(spacing: 6) {
+                if isFocusing {
+                    Image(systemName: "timer")
                         .foregroundStyle(.secondary)
+                } else if !item.done {
+                    Button(action: onStartFocus) {
+                        Image(systemName: "play.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(isHovering ? 1 : 0)
                 }
-                .buttonStyle(.plain)
-            }
-
-            if isHovering {
                 Button(action: onDelete) {
-                    Image(systemName: "xmark")
+                    Image(systemName: "xmark.circle")
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .opacity(isHovering ? 1 : 0)
             }
+            .font(.system(size: 13))
+            .frame(width: Self.actionSlotWidth, alignment: .trailing)
         }
-        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.primary.opacity(isHovering ? 0.07 : 0))
+        )
         .contentShape(Rectangle())
         .onHover { hovering in
             onHover(hovering)
@@ -1349,16 +1381,16 @@ struct ProgressRing: View {
         HStack(spacing: 6) {
             ZStack {
                 Circle()
-                    .stroke(Color.secondary.opacity(0.25), lineWidth: 3)
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 2)
                 Circle()
                     .trim(from: 0, to: fraction)
-                    .stroke(isComplete ? Color.green : Color.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .stroke(isComplete ? Color.green : Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
-            .frame(width: 18, height: 18)
+            .frame(width: 14, height: 14)
 
             Text("\(completed)/\(total)")
-                .font(.system(size: 12))
+                .font(.system(size: 11))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
