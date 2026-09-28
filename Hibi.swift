@@ -703,6 +703,10 @@ enum PomodoroPhase: Equatable {
     case idle
     case focus
     case paused
+    /// Focus ran out and the break prompt is up, but the break isn't counting down yet:
+    /// it only starts once the user acknowledges the prompt, so a missed reminder can't
+    /// silently use up the break.
+    case breakPending
     case breakTime
 }
 
@@ -767,10 +771,22 @@ final class PomodoroTicker: ObservableObject {
 final class PomodoroState: ObservableObject {
     static let focusPresets = [5, 15, 30, 40]
     static let breakMinutes = 10
+    /// While the break prompt waits for an answer, the chime repeats on this interval,
+    /// at most `breakReminderLimit` times — past that the user has likely stepped away.
+    static let breakReminderInterval: TimeInterval = 60
+    static let breakReminderLimit = 10
 
     private static let focusMinutesDefaultsKey = "hibi.focusMinutes"
 
-    @Published private(set) var phase: PomodoroPhase = .idle
+    @Published private(set) var phase: PomodoroPhase = .idle {
+        didSet {
+            // Every exit from the prompt (start break, skip, stop, a new focus session
+            // started from the panel) passes through here.
+            if oldValue == .breakPending && phase != .breakPending {
+                dismissBreakPrompt()
+            }
+        }
+    }
 
     /// Owns the per-second countdown. Views that render it observe `ticker` directly.
     let ticker = PomodoroTicker()
@@ -799,6 +815,9 @@ final class PomodoroState: ObservableObject {
     var onSettle: ((String, Tier, Int) -> Void)?
 
     private var timer: Timer?
+    private var breakReminderTimer: Timer?
+    private var breakRemindersPlayed = 0
+    private let breakPrompt = BreakPrompt()
     private var notificationsAuthorized = false
     private let notificationDelegate = ForegroundNotificationDelegate()
 
@@ -876,8 +895,15 @@ final class PomodoroState: ObservableObject {
         timer = nil
     }
 
+    func startBreak() {
+        guard phase == .breakPending else { return }
+        phase = .breakTime
+        remainingSeconds = Self.breakMinutes * 60
+        startTimer()
+    }
+
     func skip() {
-        guard phase == .breakTime else { return }
+        guard phase == .breakTime || phase == .breakPending else { return }
         stop()
     }
 
@@ -917,9 +943,10 @@ final class PomodoroState: ObservableObject {
             case .focus:
                 settle(naturalCompletion: true)
                 clearBinding()
-                notifyAndChime(title: "专注结束", body: "休息 \(Self.breakMinutes) 分钟")
-                phase = .breakTime
-                remainingSeconds = Self.breakMinutes * 60
+                timer?.invalidate()
+                timer = nil
+                phase = .breakPending
+                showBreakPrompt()
             case .breakTime:
                 notifyAndChime(title: "休息结束", body: "开始下一轮吧")
                 stop()
@@ -927,6 +954,41 @@ final class PomodoroState: ObservableObject {
                 break
             }
         }
+    }
+
+    /// The focus-end reminder. A notification banner was easy to miss — it sits in a
+    /// corner and leaves after a few seconds — so this is a centered panel that stays
+    /// until answered, plus a chime that repeats while it waits.
+    private func showBreakPrompt() {
+        NSSound(named: "Glass")?.play()
+        breakPrompt.show(focusMinutes: sessionFocusMinutes, breakMinutes: Self.breakMinutes,
+                         onStart: { [weak self] in self?.startBreak() },
+                         onSkip: { [weak self] in self?.skip() })
+        breakRemindersPlayed = 0
+        let t = Timer(timeInterval: Self.breakReminderInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.remindBreak()
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        breakReminderTimer = t
+    }
+
+    private func remindBreak() {
+        guard phase == .breakPending, breakRemindersPlayed < Self.breakReminderLimit else {
+            breakReminderTimer?.invalidate()
+            breakReminderTimer = nil
+            return
+        }
+        breakRemindersPlayed += 1
+        NSSound(named: "Glass")?.play()
+        breakPrompt.bringToFront()
+    }
+
+    private func dismissBreakPrompt() {
+        breakReminderTimer?.invalidate()
+        breakReminderTimer = nil
+        breakPrompt.dismiss()
     }
 
     private func notifyAndChime(title: String, body: String) {
@@ -1905,6 +1967,20 @@ struct PomodoroControl: View {
                 }
                 .buttonStyle(.plain)
 
+            case .breakPending:
+                Text("该休息了")
+                    .foregroundStyle(theme.text)
+                Button(action: { pomodoro.startBreak() }) {
+                    Image(systemName: "cup.and.saucer")
+                }
+                .buttonStyle(.plain)
+                .help("开始休息")
+                Button(action: { pomodoro.skip() }) {
+                    Image(systemName: "forward")
+                }
+                .buttonStyle(.plain)
+                .help("跳过休息")
+
             case .breakTime:
                 Label(ticker.timeString, systemImage: "cup.and.saucer")
                     .monospacedDigit()
@@ -1918,6 +1994,110 @@ struct PomodoroControl: View {
         .font(.system(size: 11.5))
         .foregroundStyle(theme.secondary)
     }
+}
+
+/// Content of the focus-end prompt. Same ink-only palette as the panel; the primary
+/// action is the one inverted block, the way the panel's active filter is.
+struct BreakPromptView: View {
+    let focusMinutes: Int
+    let breakMinutes: Int
+    let onStart: () -> Void
+    let onSkip: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var theme: Theme { Theme.of(colorScheme) }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "cup.and.saucer")
+                .font(.system(size: 24))
+                .foregroundStyle(theme.text)
+            VStack(spacing: 5) {
+                Text("专注结束 · \(focusMinutes) 分钟")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.text)
+                Text("该休息 \(breakMinutes) 分钟了")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.secondary)
+            }
+            HStack(spacing: 8) {
+                promptButton("跳过", fill: theme.raised, ink: theme.text, action: onSkip)
+                promptButton("开始休息", fill: theme.text, ink: theme.bg, action: onStart)
+            }
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 24)
+        .padding(.bottom, 20)
+        .frame(width: 300)
+        .background(theme.bg)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(theme.line))
+    }
+
+    private func promptButton(_ title: String, fill: Color, ink: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(ink)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).fill(fill))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Owns the floating panel that shows `BreakPromptView`. The panel is non-activating,
+/// so it appears over whatever the user is doing (other Spaces and full-screen apps
+/// included) without taking keyboard focus — typing in progress can't dismiss it.
+@MainActor
+final class BreakPrompt {
+    private var panel: NSPanel?
+
+    func show(focusMinutes: Int, breakMinutes: Int, onStart: @escaping () -> Void, onSkip: @escaping () -> Void) {
+        dismiss()
+        let content = BreakPromptView(focusMinutes: focusMinutes, breakMinutes: breakMinutes,
+                                      onStart: onStart, onSkip: onSkip)
+        let hosting = FirstClickHostingView(rootView: content)
+        let size = hosting.fittingSize
+        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
+                            styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.contentView = hosting
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
+        panel.isMovableByWindowBackground = true
+        panel.isReleasedWhenClosed = false
+
+        // Center on the screen the pointer is on — that's where the user is looking.
+        let mouse = NSEvent.mouseLocation
+        if let screen = NSScreen.screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) ?? NSScreen.main {
+            let area = screen.visibleFrame
+            panel.setFrameOrigin(NSPoint(x: area.midX - size.width / 2, y: area.midY - size.height / 2))
+        }
+        panel.orderFrontRegardless()
+        self.panel = panel
+    }
+
+    func bringToFront() {
+        panel?.orderFrontRegardless()
+    }
+
+    func dismiss() {
+        panel?.orderOut(nil)
+        panel = nil
+    }
+}
+
+/// The prompt panel can never become key, so without this every click would be spent
+/// trying to focus the window and the buttons would never fire.
+private final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 // MARK: - Self test
@@ -2435,6 +2615,8 @@ struct MenuBarLabel: View {
         case .focus, .paused:
             Text(ticker.timeString)
                 .monospacedDigit()
+        case .breakPending:
+            Label("该休息了", systemImage: "cup.and.saucer.fill")
         case .breakTime:
             Label(ticker.timeString, systemImage: "cup.and.saucer.fill")
                 .monospacedDigit()

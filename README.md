@@ -9,7 +9,7 @@ A tiny, fast macOS menu bar todo app backed by a single plain Markdown file. No 
 - Menu bar todo list with three time horizons: **Today**, **3-Day**, and **Week**
 - Eisenhower quadrant markers (`!1`–`!4`) for prioritizing tasks by importance/urgency
 - Task-bound Pomodoro timer with a selectable focus length (5/15/30/40 min, remembers your last pick) and a 10 min break, with automatic per-task time tracking
-- Focus/break-end reminders: a system notification + chime
+- Focus-end reminder: a centered, always-on-top prompt that stays until you answer it; the break countdown only starts when you click Start Break, and the chime repeats every minute (up to 10 times) while it waits. Break-end reminder: a system notification + chime
 - Tags (`#tag`) with click-to-filter
 - Edit any task in place — double-click a row and rewrite it with the same `text #tag !n` grammar the quick-add field accepts
 - Everything stored in a plain Markdown file (`~/todos.md`) — open it in any editor, sync it with any tool, edit it by hand
@@ -124,4 +124,4 @@ Runs a suite of built-in assertions with no GUI, using only temp directories —
 
 ## 中文说明
 
-Hibi（日々，"日复一日"）是一个纯 SwiftUI 实现的 macOS 菜单栏待办应用，零第三方依赖、单文件源码，数据完全保存在 `~/todos.md` 这个纯 Markdown 文件里，可以用任意编辑器直接打开修改。核心能力包括：今日/三日/本周三档时间层级、四象限优先级标记（面板上以任务左侧竖线的深浅表示，越深优先级越高）、面板内双击任务直接修改（写法和添加时一样：`正文 #标签 !象限`，回车保存，esc 放弃）、绑定任务的番茄钟（专注时长可选 5/15/30/40 分钟，自动记住上次选择 + 休息 10 分钟，自动记录每个任务的累计专注时长；专注/休息到时会发系统通知 + 提示音）、标签筛选。界面是无彩色的高对比配色，跟随系统深浅色。构建方式见上文 **Build from source**（`bash build.sh` 产出 `Hibi.app`），首次打开因为是 ad-hoc 签名需要按上文 **Gatekeeper** 一节右键打开。数据文件格式、四象限/标签/专注时长标记的具体语法见上文 **Data format**，快捷键见 **Keyboard shortcuts / interaction**，自测方式见 **Self-test**。
+Hibi（日々，"日复一日"）是一个纯 SwiftUI 实现的 macOS 菜单栏待办应用，零第三方依赖、单文件源码，数据完全保存在 `~/todos.md` 这个纯 Markdown 文件里，可以用任意编辑器直接打开修改。核心能力包括：今日/三日/本周三档时间层级、四象限优先级标记（面板上以任务左侧竖线的深浅表示，越深优先级越高）、面板内双击任务直接修改（写法和添加时一样：`正文 #标签 !象限`，回车保存，esc 放弃）、绑定任务的番茄钟（专注时长可选 5/15/30/40 分钟，自动记住上次选择 + 休息 10 分钟，自动记录每个任务的累计专注时长；专注到时在屏幕中央弹出置顶窗口，点「开始休息」才开始休息计时，没点的话每分钟再响一次提示音，最多 10 次；休息到时发系统通知 + 提示音）、标签筛选。界面是无彩色的高对比配色，跟随系统深浅色。构建方式见上文 **Build from source**（`bash build.sh` 产出 `Hibi.app`），首次打开因为是 ad-hoc 签名需要按上文 **Gatekeeper** 一节右键打开。数据文件格式、四象限/标签/专注时长标记的具体语法见上文 **Data format**，快捷键见 **Keyboard shortcuts / interaction**，自测方式见 **Self-test**。
