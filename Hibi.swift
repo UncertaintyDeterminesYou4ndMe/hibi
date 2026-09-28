@@ -23,6 +23,21 @@ struct TodoItem: Identifiable, Equatable {
     var quadrant: Quadrant? = nil
     var focusMinutes: Int = 0
     var tags: [String] = []
+
+    /// Everything except `id`. `id` is minted fresh on every parse, so `==` is useless
+    /// for answering "did the file actually change?" — see `TodoData.sameContent(as:)`.
+    func sameContent(as other: TodoItem) -> Bool {
+        text == other.text && done == other.done && quadrant == other.quadrant
+            && focusMinutes == other.focusMinutes && tags == other.tags
+    }
+
+    /// The raw text an in-place editor starts from — what the user would have typed
+    /// into the quick-add field to produce this item. `⏱Nm` is left out: the timer
+    /// owns it.
+    var editableText: String {
+        ([text] + tags.map { "#\($0)" }
+            + (quadrant.map { ["!\($0.rawValue)"] } ?? [])).joined(separator: " ")
+    }
 }
 
 struct TodoData: Equatable {
@@ -34,6 +49,20 @@ struct TodoData: Equatable {
 
     static func empty(todayDate: String) -> TodoData {
         TodoData(todayDate: todayDate, todayItems: [], threeDayItems: [], weekItems: [], archiveBody: "")
+    }
+
+    /// Equality ignoring every item's `id`. Used to tell a genuine external edit apart
+    /// from the file-watcher echo of our own `persist()`: on an echo we keep the
+    /// in-memory `data` (and therefore every item's `id`), so an in-place edit or a
+    /// hover highlight survives saving.
+    func sameContent(as other: TodoData) -> Bool {
+        guard todayDate == other.todayDate, archiveBody == other.archiveBody else { return false }
+        func same(_ a: [TodoItem], _ b: [TodoItem]) -> Bool {
+            a.count == b.count && zip(a, b).allSatisfy { $0.sameContent(as: $1) }
+        }
+        return same(todayItems, other.todayItems)
+            && same(threeDayItems, other.threeDayItems)
+            && same(weekItems, other.weekItems)
     }
 }
 
@@ -315,39 +344,6 @@ enum TodoSort {
     }
 }
 
-// MARK: - Tag color palette
-
-enum TagPalette {
-    /// 8 soft (background, foreground) color pairs for tag chips.
-    static let palette: [(Color, Color)] = [
-        (Color(red: 0.86, green: 0.91, blue: 0.98), Color(red: 0.13, green: 0.35, blue: 0.65)), // blue
-        (Color(red: 0.87, green: 0.95, blue: 0.87), Color(red: 0.16, green: 0.45, blue: 0.24)), // green
-        (Color(red: 0.99, green: 0.90, blue: 0.78), Color(red: 0.62, green: 0.36, blue: 0.05)), // orange
-        (Color(red: 0.98, green: 0.85, blue: 0.87), Color(red: 0.66, green: 0.16, blue: 0.27)), // pink
-        (Color(red: 0.92, green: 0.87, blue: 0.98), Color(red: 0.44, green: 0.24, blue: 0.66)), // purple
-        (Color(red: 0.99, green: 0.95, blue: 0.78), Color(red: 0.55, green: 0.46, blue: 0.04)), // yellow
-        (Color(red: 0.84, green: 0.95, blue: 0.95), Color(red: 0.09, green: 0.44, blue: 0.44)), // teal
-        (Color(red: 0.91, green: 0.91, blue: 0.92), Color(red: 0.36, green: 0.36, blue: 0.38)), // gray
-    ]
-
-    /// Deterministic djb2-style hash over the tag name. Swift's built-in String
-    /// hashing is randomized per process launch (DoS hardening), which would make a
-    /// tag's chip color change across app restarts — this hash is stable instead, so
-    /// the same tag name always maps to the same palette entry.
-    static func stableIndex(for tag: String) -> Int {
-        var hash: UInt64 = 5381
-        for scalar in tag.unicodeScalars {
-            hash = ((hash << 5) &+ hash) &+ UInt64(scalar.value)
-        }
-        return Int(hash % UInt64(palette.count))
-    }
-
-    static func colorPair(for tag: String) -> (background: Color, foreground: Color) {
-        let (bg, fg) = palette[stableIndex(for: tag)]
-        return (bg, fg)
-    }
-}
-
 // MARK: - Rollover
 
 enum Rollover {
@@ -519,8 +515,35 @@ final class AppState: ObservableObject {
         self.watcher?.start()
     }
 
+    /// True while a row is being edited in place. Reloads are deferred until the edit
+    /// ends, so neither the file watcher nor an app-activation can yank the editor's
+    /// row out from under it mid-typing.
+    private var reloadSuspended = false
+    private var reloadPending = false
+
     func reloadFromDisk() {
-        data = TodoFile.loadWithRollover(from: fileURL)
+        guard !reloadSuspended else {
+            reloadPending = true
+            return
+        }
+        let fresh = TodoFile.loadWithRollover(from: fileURL)
+        // Our own persist() trips the file watcher. Re-assigning `data` there would
+        // mint new ids for every item and kill any in-flight edit/hover, so ignore a
+        // reload that carries no actual content change.
+        guard !fresh.sameContent(as: data) else { return }
+        data = fresh
+    }
+
+    func suspendReload() {
+        reloadSuspended = true
+    }
+
+    func resumeReload() {
+        reloadSuspended = false
+        if reloadPending {
+            reloadPending = false
+            reloadFromDisk()
+        }
     }
 
     private func persist() {
@@ -579,6 +602,32 @@ final class AppState: ObservableObject {
         guard let item = moved else { return }
         withItems(to) { items in items.append(item) }
         persist()
+    }
+
+    /// Rewrites an item from raw input using the *same* grammar as the quick-add field
+    /// (`text #tag !n`), preserving `done` and the accumulated focus minutes. Returns
+    /// false and changes nothing when the input parses to an empty task, so the caller
+    /// can fall back to leaving the row as it was.
+    @discardableResult
+    func updateText(_ id: UUID, raw: String, in tier: Tier) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let (afterSuffix, quadrant, minutes) = TodoParser.stripSuffixMarkers(trimmed)
+        let (clean, tags) = TodoParser.extractTags(afterSuffix)
+        guard !clean.isEmpty else { return false }
+        var changed = false
+        withItems(tier) { items in
+            guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+            items[idx].text = clean
+            items[idx].tags = tags
+            items[idx].quadrant = quadrant
+            // `⏱Nm` is tracked by the timer, not typed by hand: an explicit marker in
+            // the input overrides it, its absence leaves the running total alone.
+            if let minutes = minutes { items[idx].focusMinutes = minutes }
+            changed = true
+        }
+        if changed { persist() }
+        return changed
     }
 
     func add(_ text: String, to tier: Tier) {
@@ -694,6 +743,26 @@ final class ForegroundNotificationDelegate: NSObject, UNUserNotificationCenterDe
     }
 }
 
+/// The once-a-second countdown, deliberately split out of `PomodoroState`.
+///
+/// While `remainingSeconds` was `@Published` on `PomodoroState`, every view observing
+/// the timer re-ran its body each second — including `PanelView`, and with it every
+/// row's `.contextMenu`. An open context menu was therefore torn down and rebuilt on
+/// every tick: it flickered, and moving the mouse toward a submenu dismissed it before
+/// it could be clicked. Only the two views that actually draw a countdown observe this
+/// object; everything else observes `PomodoroState`, which now only publishes on real
+/// state changes (start/pause/stop/phase).
+@MainActor
+final class PomodoroTicker: ObservableObject {
+    @Published fileprivate(set) var remainingSeconds: Int = 0
+
+    var timeString: String {
+        let m = max(0, remainingSeconds) / 60
+        let s = max(0, remainingSeconds) % 60
+        return String(format: "%02d:%02d", m, s)
+    }
+}
+
 @MainActor
 final class PomodoroState: ObservableObject {
     static let focusPresets = [5, 15, 30, 40]
@@ -702,7 +771,15 @@ final class PomodoroState: ObservableObject {
     private static let focusMinutesDefaultsKey = "hibi.focusMinutes"
 
     @Published private(set) var phase: PomodoroPhase = .idle
-    @Published private(set) var remainingSeconds: Int = 0
+
+    /// Owns the per-second countdown. Views that render it observe `ticker` directly.
+    let ticker = PomodoroTicker()
+
+    /// Forwards to `ticker`. Not `@Published` on purpose — see `PomodoroTicker`.
+    private(set) var remainingSeconds: Int {
+        get { ticker.remainingSeconds }
+        set { ticker.remainingSeconds = newValue }
+    }
 
     /// Last-chosen focus preset (minutes), persisted across launches so the next
     /// implicit `start()`/`startFocus()` (no explicit `minutes:`) reuses it.
@@ -744,11 +821,7 @@ final class PomodoroState: ObservableObject {
         }
     }
 
-    var timeString: String {
-        let m = max(0, remainingSeconds) / 60
-        let s = max(0, remainingSeconds) % 60
-        return String(format: "%02d:%02d", m, s)
-    }
+    var timeString: String { ticker.timeString }
 
     /// Starts a free focus session, not bound to any task (v2 behavior — no duration
     /// tracked). If a session is already running for another (bound or free) task, it
@@ -871,6 +944,131 @@ final class PomodoroState: ObservableObject {
 
 // MARK: - UI
 
+/// Grok-style palette: no hue anywhere, high contrast, 1px rules, 4px radii.
+/// Hierarchy comes from ink density and whitespace, never from colored fills.
+struct Theme {
+    let bg: Color          // panel ground (opaque — the menu bar window's own material is covered)
+    let raised: Color      // hovered row, input well
+    let text: Color
+    let secondary: Color
+    let faint: Color       // tags, durations, section labels
+    let line: Color        // hairline rules and unchecked box outlines
+
+    static let radius: CGFloat = 4
+
+    static func of(_ scheme: ColorScheme) -> Theme {
+        scheme == .dark ? .dark : .light
+    }
+
+    static let light = Theme(
+        bg:        Color(red: 1.00, green: 1.00, blue: 1.00),
+        raised:    Color(red: 0.949, green: 0.949, blue: 0.953),
+        text:      Color(red: 0.055, green: 0.055, blue: 0.063),
+        secondary: Color(red: 0.435, green: 0.435, blue: 0.451),
+        faint:     Color(red: 0.643, green: 0.643, blue: 0.659),
+        line:      Color(red: 0.898, green: 0.898, blue: 0.906)
+    )
+
+    static let dark = Theme(
+        bg:        Color(red: 0.039, green: 0.039, blue: 0.039),
+        raised:    Color(red: 0.110, green: 0.110, blue: 0.114),
+        text:      Color(red: 0.957, green: 0.957, blue: 0.961),
+        secondary: Color(red: 0.541, green: 0.541, blue: 0.557),
+        faint:     Color(red: 0.361, green: 0.361, blue: 0.376),
+        line:      Color(red: 0.153, green: 0.153, blue: 0.161)
+    )
+
+    /// Quadrant priority as ink density on the row's leading rule: q1 solid, fading to
+    /// nearly nothing at q4, absent when unset. Reads as darkness rather than hue, so
+    /// it survives both color schemes and colorblindness without a second palette.
+    func rail(for quadrant: Quadrant?) -> Color {
+        switch quadrant {
+        case .q1: return text
+        case .q2: return text.opacity(0.42)
+        case .q3: return text.opacity(0.24)
+        case .q4: return text.opacity(0.12)
+        case .none: return .clear
+        }
+    }
+}
+
+/// The app icon's cat head as one shared piece of geometry — wide ellipse head,
+/// quadratic-rounded ear tips, negative-space eyes, authored on a 24×24 canvas.
+/// Always a template image, so every surface (menu bar, Control Center, panel)
+/// tints it with its own ink and the panel's no-hue discipline stays intact.
+enum CatGlyph {
+    static func image(size: CGFloat) -> NSImage {
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            ctx.scaleBy(x: rect.width / 24, y: rect.height / 24)
+            ctx.setFillColor(NSColor.black.cgColor)
+
+            // Ears: triangles with quadratic-rounded tips.
+            for (outer, tip, inner) in [(NSPoint(x: 2.8, y: 10.6), NSPoint(x: 5.4, y: 2.4), NSPoint(x: 10.8, y: 8.0)),
+                                        (NSPoint(x: 21.2, y: 10.6), NSPoint(x: 18.6, y: 2.4), NSPoint(x: 13.2, y: 8.0))] {
+                let d: CGFloat = 1.7
+                func toward(_ from: NSPoint, _ to: NSPoint) -> NSPoint {
+                    let dx = to.x - from.x, dy = to.y - from.y
+                    let len = (dx * dx + dy * dy).squareRoot()
+                    return NSPoint(x: from.x + dx / len * d, y: from.y + dy / len * d)
+                }
+                let ear = NSBezierPath()
+                ear.move(to: outer)
+                ear.line(to: toward(tip, outer))
+                ear.curve(to: toward(tip, inner), controlPoint: tip)
+                ear.line(to: inner)
+                ear.close()
+                ear.fill()
+            }
+            // Head: wide ellipse.
+            ctx.fillEllipse(in: CGRect(x: 2.4, y: 8.2, width: 19.2, height: 13.6))
+
+            // Eyes: negative-space vertical rounded rects.
+            ctx.setBlendMode(.destinationOut)
+            for x in [7.7, 14.3] as [CGFloat] {
+                NSBezierPath(roundedRect: NSRect(x: x, y: 12.6, width: 2.0, height: 4.2),
+                             xRadius: 1.0, yRadius: 1.0).fill()
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
+    static let menuBar = image(size: 18)
+    static let emptyState = image(size: 30)
+    static let help = image(size: 12)
+}
+
+extension View {
+    /// `onChange(of:perform:)` is the only spelling available on our macOS 13.0
+    /// deployment floor, and is deprecated from 14 on. This picks the modern
+    /// two-parameter form when it exists; the deprecated call is confined to a
+    /// deprecated shim, which is how Swift lets it compile without a warning.
+    @ViewBuilder
+    func onValueChange<V: Equatable>(of value: V, perform action: @escaping (V) -> Void) -> some View {
+        if #available(macOS 14.0, *) {
+            onChange(of: value) { _, newValue in action(newValue) }
+        } else {
+            legacyOnChange(of: value, perform: action)
+        }
+    }
+
+    @available(macOS, deprecated: 14.0, message: "Shim only — callers should use onValueChange.")
+    private func legacyOnChange<V: Equatable>(of value: V, perform action: @escaping (V) -> Void) -> some View {
+        onChange(of: value, perform: action)
+    }
+}
+
+/// 1px rule. Replaces `Divider()`, whose thickness and (vibrancy-derived) color can't
+/// be pinned down inside a menu bar window.
+struct Hairline: View {
+    let color: Color
+    var body: some View {
+        Rectangle().fill(color).frame(height: 1)
+    }
+}
+
 /// Height math for the panel's scrolling list area.
 ///
 /// The list *must* be given a definite height. Inside `MenuBarExtra(.window)`
@@ -884,12 +1082,12 @@ final class PomodoroState: ObservableObject {
 /// window something concrete to size itself to.
 enum PanelLayout {
     /// Tallest the list may grow before it starts scrolling instead.
-    static let maxListHeight: CGFloat = 360
+    static let maxListHeight: CGFloat = 420
 
     /// Floor used before the first measurement lands (and as a guard against a
-    /// degenerate 0). Roughly the height of the "今天没有待办 🎉" empty state, so
+    /// degenerate 0). Roughly the height of the "今天没有待办" empty state, so
     /// the pre-measurement frame is never taller than the real content.
-    static let minListHeight: CGFloat = 68
+    static let minListHeight: CGFloat = 64
 
     static func listHeight(contentHeight: CGFloat) -> CGFloat {
         guard contentHeight > 0 else { return minListHeight }
@@ -905,38 +1103,93 @@ private struct ListContentHeightKey: PreferenceKey {
     }
 }
 
+/// Carries the measured height of the whole panel out of the root layout, so the
+/// window can be resized to fit it. `MenuBarExtra(.window)` frames the panel from
+/// the *first* layout pass — when `listContentHeight` still reads 0 and the list
+/// is only `minListHeight` tall — and never revisits the frame when the real
+/// measurement lands. Without an explicit resize, the first open after launch
+/// clips the bottom of the list, the quick-add bar and the toolbar; every later
+/// open looks fine only because the retained `@State` still holds the last
+/// measured height.
+private struct PanelHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// Reads the `NSWindow` a view is hosted in. `MenuBarExtra` exposes no handle to
+/// its panel, so the view hierarchy is the only way up.
+private struct WindowAccessor: NSViewRepresentable {
+    let onResolve: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { onResolve(view.window) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { onResolve(nsView.window) }
+    }
+}
+
 struct PanelView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var pomodoro: PomodoroState
+    @Environment(\.colorScheme) private var colorScheme
     @State private var quickAddText: String = ""
     @FocusState private var quickAddFocused: Bool
     @State private var eventMonitor: Any?
-    @State private var hoveringId: UUID?
     @State private var showHelp: Bool = false
     @State private var listContentHeight: CGFloat = 0
+    @State private var panelHeight: CGFloat = 0
+    @State private var panelWindow: NSWindow?
+    @State private var editingId: UUID?
+    @State private var editingTier: Tier = .today
+    /// Name of whatever app currently owns `.md`, resolved once when the panel opens.
+    /// Shown in the Open File tooltip so a slow handler (Xcode is a common default
+    /// owner of `.md`) explains itself instead of looking like a dead button.
+    @State private var openerName: String?
+
+    private var theme: Theme { Theme.of(colorScheme) }
+
+    /// Resizes the panel window to the measured content height. The panel hangs
+    /// below the menu bar, so the top edge stays pinned and the window grows
+    /// downward. No-op until both the window and a real measurement exist.
+    private func fitPanelWindow() {
+        guard let window = panelWindow, panelHeight > 0 else { return }
+        let size = NSSize(width: 340, height: panelHeight)
+        guard abs(window.frame.width - size.width) > 0.5
+                || abs(window.frame.height - size.height) > 0.5 else { return }
+        var frame = window.frame
+        frame.origin.y = frame.maxY - size.height
+        frame.size = size
+        window.setFrame(frame, display: true)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider()
+            Hairline(color: theme.line)
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
                     if appState.activeTagFilter != nil {
                         filteredSectionsView
                     } else {
                         todaySection
                         if !appState.data.threeDayItems.isEmpty {
-                            Divider()
+                            Hairline(color: theme.line)
                             threeDaySection
                         }
                         if !appState.data.weekItems.isEmpty {
-                            Divider()
+                            Hairline(color: theme.line)
                             weekSection
                         }
                     }
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(key: ListContentHeightKey.self, value: proxy.size.height)
@@ -947,17 +1200,34 @@ struct PanelView: View {
             .onPreferenceChange(ListContentHeightKey.self) { height in
                 listContentHeight = height
             }
-            Divider()
+            Hairline(color: theme.line)
             quickAddBar
-            Divider()
+            Hairline(color: theme.line)
             bottomToolbar
         }
-        .frame(width: 320)
+        .frame(width: 340)
+        .background(theme.bg)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: PanelHeightKey.self, value: proxy.size.height)
+            }
+        )
+        .background(WindowAccessor { window in
+            panelWindow = window
+            fitPanelWindow()
+        })
+        .onPreferenceChange(PanelHeightKey.self) { height in
+            panelHeight = height
+            fitPanelWindow()
+        }
         .onAppear {
             appState.reloadFromDisk()
             installEventMonitor()
+            openerName = NSWorkspace.shared.urlForApplication(toOpen: appState.fileURL)
+                .flatMap { FileManager.default.displayName(atPath: $0.path) }
         }
         .onDisappear {
+            cancelEdit()
             removeEventMonitor()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -968,18 +1238,19 @@ struct PanelView: View {
     // MARK: Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
                 Text("今日")
                     .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.text)
                 Text(DateUtil.headerDisplay(for: appState.data.todayDate))
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.secondary)
                 Spacer(minLength: 8)
                 if appState.activeTagFilter != nil {
-                    ProgressRing(completed: appState.filteredTodayCompletedCount, total: appState.filteredTodayTotalCount)
+                    ProgressRing(completed: appState.filteredTodayCompletedCount, total: appState.filteredTodayTotalCount, theme: theme)
                 } else {
-                    ProgressRing(completed: appState.todayCompletedCount, total: appState.todayTotalCount)
+                    ProgressRing(completed: appState.todayCompletedCount, total: appState.todayTotalCount, theme: theme)
                 }
             }
             HStack(spacing: 8) {
@@ -987,29 +1258,30 @@ struct PanelView: View {
                     filterBar(tag)
                 }
                 Spacer(minLength: 0)
-                PomodoroControl(pomodoro: pomodoro)
+                PomodoroControl(pomodoro: pomodoro, ticker: pomodoro.ticker, theme: theme)
             }
         }
         .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.top, 11)
+        .padding(.bottom, 9)
     }
 
+    /// The one inverted block in the panel — the active filter is the only state that
+    /// warrants shouting, and inverting ink is how it shouts without introducing a hue.
     private func filterBar(_ tag: String) -> some View {
-        let colors = TagPalette.colorPair(for: tag)
-        return HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Text("#\(tag)")
                 .font(.system(size: 11, weight: .medium))
             Button(action: { appState.setTagFilter(nil) }) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 8, weight: .bold))
             }
             .buttonStyle(.plain)
         }
-        .foregroundStyle(colors.foreground)
-        .padding(.horizontal, 8)
+        .foregroundStyle(theme.bg)
+        .padding(.horizontal, 7)
         .padding(.vertical, 3)
-        .background(Capsule().fill(colors.background))
+        .background(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).fill(theme.text))
     }
 
     // MARK: Sections
@@ -1017,16 +1289,25 @@ struct PanelView: View {
     private var todaySection: some View {
         Group {
             if appState.data.todayItems.isEmpty {
-                Text("今天没有待办 🎉")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 16)
+                emptyState("今天没有待办")
             } else {
                 sectionView(tier: .today, items: appState.data.todayItems, title: nil,
                             moveTargets: [(.threeDay, "三日"), (.week, "本周")])
             }
         }
+    }
+
+    /// Empty lists are the panel's natural brand moment: the shared cat mark in faint
+    /// ink above the placeholder line, instead of bare text.
+    private func emptyState(_ text: String) -> some View {
+        VStack(spacing: 7) {
+            Image(nsImage: CatGlyph.emptyState)
+            Text(text)
+                .font(.system(size: 12))
+        }
+        .foregroundStyle(theme.faint)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
     }
 
     private var threeDaySection: some View {
@@ -1055,14 +1336,10 @@ struct PanelView: View {
         }
         return Group {
             if visible.isEmpty {
-                Text("没有匹配的任务")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 16)
+                emptyState("没有匹配的任务")
             } else {
                 ForEach(Array(visible.enumerated()), id: \.offset) { idx, entry in
-                    if idx > 0 { Divider() }
+                    if idx > 0 { Hairline(color: theme.line) }
                     sectionView(tier: entry.0, items: entry.3, title: entry.1, moveTargets: entry.2)
                 }
             }
@@ -1073,23 +1350,27 @@ struct PanelView: View {
         VStack(alignment: .leading, spacing: 1) {
             if let title = title {
                 Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(theme.faint)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 2)
+                    .padding(.bottom, 3)
             }
             ForEach(TodoSort.sorted(items)) { item in
                 TodoRow(
                     item: item,
-                    isHovering: hoveringId == item.id,
+                    theme: theme,
                     isFocusing: pomodoro.phase == .focus && pomodoro.boundTaskId == item.id,
+                    isEditing: editingId == item.id,
                     onToggle: { appState.toggle(item.id, in: tier) },
                     onDelete: { appState.delete(item.id, in: tier) },
                     onStartFocus: { pomodoro.startFocus(taskId: item.id, tier: tier, text: item.text) },
-                    onHover: { hovering in hoveringId = hovering ? item.id : nil },
-                    onTagTap: { tag in appState.toggleTagFilter(tag) }
+                    onTagTap: { tag in appState.toggleTagFilter(tag) },
+                    onBeginEdit: { beginEdit(item, in: tier) },
+                    onCommitEdit: { text in commitEdit(text) }
                 )
                 .contextMenu {
+                    Button("编辑") { beginEdit(item, in: tier) }
                     Menu("开始专注") {
                         ForEach(PomodoroState.focusPresets, id: \.self) { m in
                             Button("\(m) 分钟") { pomodoro.startFocus(taskId: item.id, tier: tier, text: item.text, minutes: m) }
@@ -1114,6 +1395,36 @@ struct PanelView: View {
         }
     }
 
+    // MARK: In-place editing
+
+    /// Editing runs against the item's *raw* form (`text #tag !n`) — the same grammar
+    /// the quick-add field accepts — so there's only one syntax to learn. Reloads are
+    /// suspended for the duration: `persist()` echoes back through the file watcher,
+    /// and re-parsing would mint a new `id` for the row being edited.
+    private func beginEdit(_ item: TodoItem, in tier: Tier) {
+        guard editingId != item.id else { return }
+        if editingId != nil { cancelEdit() }
+        appState.suspendReload()
+        editingTier = tier
+        editingId = item.id
+    }
+
+    private func commitEdit(_ text: String) {
+        guard let id = editingId else { return }
+        appState.updateText(id, raw: text, in: editingTier)
+        finishEdit()
+    }
+
+    private func cancelEdit() {
+        guard editingId != nil else { return }
+        finishEdit()
+    }
+
+    private func finishEdit() {
+        editingId = nil
+        appState.resumeReload()
+    }
+
     // MARK: Quick add
 
     private var quickAddPlaceholder: String {
@@ -1135,25 +1446,31 @@ struct PanelView: View {
     }
 
     private var quickAddBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "plus.circle")
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
+        HStack(spacing: 9) {
+            Image(systemName: "plus")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.faint)
             TextField(quickAddPlaceholder, text: $quickAddText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
+                .foregroundStyle(theme.text)
                 .focused($quickAddFocused)
                 .onSubmit {
                     submitQuickAdd(to: .today)
                 }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.vertical, 10)
     }
 
     private func installEventMonitor() {
         guard eventMonitor == nil else { return }
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Esc leaves an in-place edit without writing it back.
+            if editingId != nil, event.keyCode == 53 {
+                cancelEdit()
+                return nil
+            }
             if quickAddFocused, event.keyCode == 36 {
                 if event.modifierFlags.contains(.command) {
                     submitQuickAdd(to: .week)
@@ -1176,229 +1493,359 @@ struct PanelView: View {
 
     // MARK: Bottom toolbar
 
-    private var bottomToolbar: some View {
-        HStack {
-            Button("打开文件") {
-                NSWorkspace.shared.open(appState.fileURL)
+    /// Opens `~/todos.md` in whatever app owns `.md`, *activating* it. Without
+    /// `activates`, a slow-launching handler (Xcode is a common default owner of `.md`)
+    /// comes up behind everything and the click looks like it did nothing. If there's
+    /// no handler at all, or the launch fails, fall back to revealing the file in
+    /// Finder so the click always produces something visible.
+    private func openTodoFile() {
+        let url = appState.fileURL
+        guard let app = NSWorkspace.shared.urlForApplication(toOpen: url) else {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: config) { _, error in
+            guard error != nil else { return }
+            DispatchQueue.main.async {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
             }
-            .buttonStyle(.plain)
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
+        }
+    }
+
+    private var bottomToolbar: some View {
+        HStack(spacing: 10) {
+            IconToolbarButton(systemImage: "doc.plaintext", theme: theme, action: openTodoFile)
+                .help(openerName.map { "用 \($0) 打开 \(appState.fileURL.path)" }
+                      ?? "在 Finder 中显示 \(appState.fileURL.path)")
+                .contextMenu {
+                    Button("在 Finder 中显示") {
+                        NSWorkspace.shared.activateFileViewerSelecting([appState.fileURL])
+                    }
+                    Button("拷贝路径") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(appState.fileURL.path, forType: .string)
+                    }
+                }
 
             Button(action: { showHelp.toggle() }) {
                 Image(systemName: "questionmark.circle")
+                    .font(.system(size: 11.5))
             }
             .buttonStyle(.plain)
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(theme.secondary)
             .popover(isPresented: $showHelp, arrowEdge: .top) {
                 helpContent
             }
 
             Spacer()
 
-            Button("退出") {
-                NSApp.terminate(nil)
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 12))
-            .foregroundStyle(.secondary)
+            IconToolbarButton(systemImage: "power", theme: theme, action: { NSApp.terminate(nil) })
+                .help("退出")
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.vertical, 9)
     }
 
     // MARK: Help popover
 
     private var helpContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 5) {
+                Image(nsImage: CatGlyph.help)
+                Text("Hibi")
+                    .font(.system(size: 11.5, weight: .semibold))
+            }
+            .foregroundStyle(theme.secondary)
             helpSection(title: "添加", lines: [
                 "↩ 加到今日 · ⌥↩ 三日 · ⌘↩ 本周",
                 "任务结尾写 !1~!4 标象限",
-                "#项目名 打标签，点击标签可筛选",
+                "#项目名 打标签，点标签可筛选",
+            ])
+            helpSection(title: "修改", lines: [
+                "双击任务在面板里直接改，写法和添加时一样",
+                "↩ 保存 · esc 放弃 · 点别处也会保存",
             ])
             helpSection(title: "象限", lines: [
-                "!1 重要紧急(红) !2 重要不紧急(蓝) !3 紧急不重要(橙) !4 都不(灰)",
-                "右键任务可改象限/移动层级",
+                "任务左侧竖线越深优先级越高：!1 最深，!4 最浅",
+                "右键任务可改象限 / 移动层级",
             ])
             helpSection(title: "专注", lines: [
-                "悬停任务点 ▶ 为它计时 · 右键可选 5/15/30/40 分钟 · 时长自动记到任务上",
-                "到时提醒：系统通知 + 提示音",
+                "悬停任务点播放键为它计时，右键可选 5/15/30/40 分钟",
+                "专注时长自动累加到任务上，到时发系统通知 + 提示音",
             ])
         }
-        .padding(10)
-        .frame(width: 260, alignment: .leading)
+        .padding(12)
+        .frame(width: 280, alignment: .leading)
+        .background(theme.bg)
     }
 
     private func helpSection(title: String, lines: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(theme.text)
             ForEach(lines, id: \.self) { line in
                 Text(line)
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
+/// Icon-only toolbar button that darkens to full ink on hover — the whole hover
+/// vocabulary of the panel, no fills or outlines.
+struct IconToolbarButton: View {
+    let systemImage: String
+    let theme: Theme
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11.5))
+                .frame(width: 16, height: 13)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(hovering ? theme.text : theme.secondary)
+        .onHover { hovering = $0 }
+    }
+}
+
 struct TodoRow: View {
     let item: TodoItem
-    let isHovering: Bool
+    let theme: Theme
     let isFocusing: Bool
+    let isEditing: Bool
     let onToggle: () -> Void
     let onDelete: () -> Void
     let onStartFocus: () -> Void
-    let onHover: (Bool) -> Void
     let onTagTap: (String) -> Void
+    let onBeginEdit: () -> Void
+    let onCommitEdit: (String) -> Void
 
-    private var circleColor: Color {
-        guard !item.done else { return .green }
-        switch item.quadrant {
-        case .q1: return Color(nsColor: .systemRed)
-        case .q2: return Color(nsColor: .systemBlue)
-        case .q3: return Color(nsColor: .systemOrange)
-        case .q4: return .gray
-        case .none: return .secondary
-        }
-    }
+    /// Kept local rather than lifted into `PanelView`: hovering a row must not
+    /// invalidate its siblings, or moving the mouse off a row toward its own open
+    /// context menu would rebuild that menu and dismiss it.
+    @State private var isHovering = false
 
+    /// Minutes as `40m` / `1h25m`. No clock glyph — the unit carries it.
     private func formattedFocusDuration(_ minutes: Int) -> String {
-        guard minutes >= 60 else { return "⏱ \(minutes)m" }
+        guard minutes >= 60 else { return "\(minutes)m" }
         let h = minutes / 60
         let m = minutes % 60
-        return m > 0 ? "⏱ \(h)h\(m)m" : "⏱ \(h)h"
+        return m > 0 ? "\(h)h\(m)m" : "\(h)h"
     }
 
     /// Width reserved for the trailing action buttons. Always laid out (just
     /// transparent when not hovering) so revealing them never re-wraps the text
     /// and shifts the row.
-    private static let actionSlotWidth: CGFloat = 40
+    private static let actionSlotWidth: CGFloat = 36
 
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Button(action: onToggle) {
-                Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(circleColor)
+    private var rowBackground: Color {
+        if isEditing || isHovering { return theme.raised }
+        return .clear
+    }
+
+    /// A stroked `Circle` is hit-tested on its 1pt ring only, so without an explicit
+    /// content shape a click in the middle of the box fell straight through. The
+    /// shape stays 13pt; the clickable area is a 22pt square around it.
+    private var checkbox: some View {
+        Button(action: onToggle) {
+            ZStack {
+                if item.done {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(theme.secondary)
+                } else {
+                    Circle()
+                        .strokeBorder(isHovering ? theme.secondary : theme.faint, lineWidth: 1.2)
+                        .frame(width: 13, height: 13)
+                }
             }
-            .buttonStyle(.plain)
+            .frame(width: 22, height: 22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: 13, height: 13)
+    }
 
+    private var content: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(item.text)
                 .font(.system(size: 13))
-                .strikethrough(item.done)
-                .foregroundStyle(item.done ? .secondary : .primary)
+                .strikethrough(item.done, color: theme.faint)
+                .foregroundStyle(item.done ? theme.faint : theme.text)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
             ForEach(item.tags, id: \.self) { tag in
-                TagChip(tag: tag, dimmed: item.done, onTap: { onTagTap(tag) })
+                TagChip(tag: tag, theme: theme, onTap: { onTagTap(tag) })
             }
 
             if item.focusMinutes > 0 {
                 Text(formattedFocusDuration(item.focusMinutes))
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.faint)
                     .monospacedDigit()
             }
 
             Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+        // Double-click on the text only. On the whole row it also sat over the checkbox
+        // and the action buttons, where a two-click recognizer gets in the way of
+        // single clicks.
+        .onTapGesture(count: 2) { onBeginEdit() }
+    }
 
-            HStack(spacing: 6) {
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            checkbox
+
+            if isEditing {
+                RowEditor(initial: item.editableText, theme: theme, onCommit: onCommitEdit)
+            } else {
+                content
+            }
+
+            HStack(spacing: 7) {
                 if isFocusing {
                     Image(systemName: "timer")
-                        .foregroundStyle(.secondary)
-                } else if !item.done {
+                        .foregroundStyle(theme.text)
+                } else if !item.done && !isEditing {
                     Button(action: onStartFocus) {
-                        Image(systemName: "play.circle")
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "play")
+                            .foregroundStyle(theme.secondary)
                     }
                     .buttonStyle(.plain)
                     .opacity(isHovering ? 1 : 0)
                 }
-                Button(action: onDelete) {
-                    Image(systemName: "xmark.circle")
-                        .foregroundStyle(.secondary)
+                if !isEditing {
+                    Button(action: onDelete) {
+                        Image(systemName: "xmark")
+                            .foregroundStyle(theme.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(isHovering ? 1 : 0)
                 }
-                .buttonStyle(.plain)
-                .opacity(isHovering ? 1 : 0)
             }
-            .font(.system(size: 13))
+            .font(.system(size: 10.5, weight: .medium))
             .frame(width: Self.actionSlotWidth, alignment: .trailing)
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 10)
+        .padding(.trailing, 8)
         .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(Color.primary.opacity(isHovering ? 0.07 : 0))
+            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                .fill(rowBackground)
         )
+        .overlay(alignment: .leading) {
+            // Quadrant rail. Completed work has no priority left, so its rail goes away.
+            RoundedRectangle(cornerRadius: 1, style: .continuous)
+                .fill(item.done ? Color.clear : theme.rail(for: item.quadrant))
+                .frame(width: 2)
+                .padding(.vertical, 3)
+        }
         .contentShape(Rectangle())
         .onHover { hovering in
-            onHover(hovering)
+            isHovering = hovering
         }
     }
 }
 
-/// A small clickable pill showing a tag name (without the leading `#`). Background
-/// color is chosen deterministically from an 8-color palette by the tag name's hash,
-/// so the same tag always renders in the same color. Grays out when `dimmed` (used
-/// for tags on completed items).
-struct TagChip: View {
-    let tag: String
-    let dimmed: Bool
-    let onTap: () -> Void
+/// The in-place text field. Its draft lives here, not in `PanelView`: as panel state,
+/// every keystroke re-ran the whole panel body (all rows, all context menus), which
+/// is what made typing feel sluggish.
+private struct RowEditor: View {
+    let theme: Theme
+    let onCommit: (String) -> Void
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(initial: String, theme: Theme, onCommit: @escaping (String) -> Void) {
+        _text = State(initialValue: initial)
+        self.theme = theme
+        self.onCommit = onCommit
+    }
 
     var body: some View {
-        let colors = TagPalette.colorPair(for: tag)
+        TextField("", text: $text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .foregroundStyle(theme.text)
+            .focused($focused)
+            .onSubmit { onCommit(text) }
+            // Focus has to be claimed a tick after the field is installed; setting it
+            // inside the same layout pass is dropped.
+            .onAppear { DispatchQueue.main.async { focused = true } }
+            .onValueChange(of: focused) { isFocused in
+                // Clicking elsewhere in the panel commits, matching the quick-add field's
+                // "typing is never silently thrown away" behavior.
+                if !isFocused { onCommit(text) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A tag as plain `#name` text, clickable to filter. Monochrome by design: eight
+/// pastel chips competing with the quadrant rails was the single biggest source of
+/// visual noise in the old panel.
+struct TagChip: View {
+    let tag: String
+    let theme: Theme
+    let onTap: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
         Button(action: onTap) {
-            Text(tag)
-                .font(.system(size: 10))
-                .foregroundStyle(dimmed ? Color.secondary : colors.foreground)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(dimmed ? Color.secondary.opacity(0.15) : colors.background))
+            Text("#\(tag)")
+                .font(.system(size: 11))
+                .foregroundStyle(hovering ? theme.secondary : theme.faint)
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
 struct ProgressRing: View {
     let completed: Int
     let total: Int
+    let theme: Theme
 
     private var fraction: CGFloat {
         guard total > 0 else { return 0 }
         return CGFloat(completed) / CGFloat(total)
     }
 
-    private var isComplete: Bool {
-        total > 0 && completed == total
-    }
-
     var body: some View {
         HStack(spacing: 6) {
             ZStack {
                 Circle()
-                    .stroke(Color.secondary.opacity(0.25), lineWidth: 2)
+                    .stroke(theme.line, lineWidth: 1.5)
                 Circle()
                     .trim(from: 0, to: fraction)
-                    .stroke(isComplete ? Color.green : Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .stroke(theme.text, style: StrokeStyle(lineWidth: 1.5, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
             }
-            .frame(width: 14, height: 14)
+            .frame(width: 12, height: 12)
 
             Text("\(completed)/\(total)")
                 .font(.system(size: 11))
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(theme.secondary)
         }
     }
 }
 
 struct PomodoroControl: View {
     @ObservedObject var pomodoro: PomodoroState
+    @ObservedObject var ticker: PomodoroTicker
+    let theme: Theme
 
     /// Truncates a bound task's name to roughly 12 characters for the header display.
     private func truncatedTaskName(_ text: String) -> String {
@@ -1408,7 +1855,7 @@ struct PomodoroControl: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 7) {
             switch pomodoro.phase {
             case .idle:
                 Menu {
@@ -1416,50 +1863,60 @@ struct PomodoroControl: View {
                         Button("\(m) 分钟") { pomodoro.start(minutes: m) }
                     }
                 } label: {
-                    Label("开始专注", systemImage: "play.fill")
+                    HStack(spacing: 3) {
+                        Image(systemName: "play")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7, weight: .bold))
+                    }
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
+                .foregroundStyle(theme.secondary)
+                .help("开始专注")
 
             case .focus:
                 if let taskText = pomodoro.boundTaskText {
                     Text(truncatedTaskName(taskText))
                         .lineLimit(1)
+                        .foregroundStyle(theme.secondary)
                 }
-                Text(pomodoro.timeString)
+                Text(ticker.timeString)
                     .monospacedDigit()
+                    .foregroundStyle(theme.text)
                 Button(action: { pomodoro.pause() }) {
-                    Image(systemName: "pause.fill")
+                    Image(systemName: "pause")
                 }
                 .buttonStyle(.plain)
                 Button(action: { pomodoro.stop() }) {
-                    Image(systemName: "stop.fill")
+                    Image(systemName: "stop")
                 }
                 .buttonStyle(.plain)
 
             case .paused:
-                Text(pomodoro.timeString)
+                Text(ticker.timeString)
                     .monospacedDigit()
+                    .foregroundStyle(theme.secondary)
                 Button(action: { pomodoro.resume() }) {
-                    Image(systemName: "play.fill")
+                    Image(systemName: "play")
                 }
                 .buttonStyle(.plain)
                 Button(action: { pomodoro.stop() }) {
-                    Image(systemName: "stop.fill")
+                    Image(systemName: "stop")
                 }
                 .buttonStyle(.plain)
 
             case .breakTime:
-                Label("休息 \(pomodoro.timeString)", systemImage: "cup.and.saucer.fill")
+                Label(ticker.timeString, systemImage: "cup.and.saucer")
                     .monospacedDigit()
+                    .foregroundStyle(theme.secondary)
                 Button(action: { pomodoro.skip() }) {
-                    Image(systemName: "forward.fill")
+                    Image(systemName: "forward")
                 }
                 .buttonStyle(.plain)
             }
         }
-        .font(.system(size: 12))
-        .foregroundStyle(.secondary)
+        .font(.system(size: 11.5))
+        .foregroundStyle(theme.secondary)
     }
 }
 
@@ -1711,12 +2168,6 @@ enum SelfTest {
             let noTagSerialized = TodoParser.serializeItem(TodoItem(text: "普通任务", done: false, quadrant: .q1))
             check("no tags: serialize unchanged", noTagSerialized == "- [ ] 普通任务 !1", "got \(noTagSerialized)")
 
-            // TagPalette color assignment is stable (deterministic hash, not Swift's
-            // randomized-per-process String hashing) — same tag name always maps to
-            // the same palette index.
-            let idxA = TagPalette.stableIndex(for: "maka-bazzi")
-            let idxB = TagPalette.stableIndex(for: "maka-bazzi")
-            check("tag color: stable index is deterministic for same name", idxA == idxB && idxA >= 0 && idxA < TagPalette.palette.count)
         }
 
         // 4. New rollover: completed items across all three tiers consolidate into one
@@ -1854,6 +2305,86 @@ enum SelfTest {
                       .allSatisfy { PanelLayout.listHeight(contentHeight: $0) > 0 })
         }
 
+        // 9. In-place editing: the raw spelling the editor hands the user, what an edit
+        //    preserves, and the id-blind content comparison that keeps an edit alive
+        //    across the file-watcher echo of its own save.
+        do {
+            let today = DateUtil.todayDateString()
+
+            // sameContent must ignore the per-parse id — otherwise every persist() would
+            // look like an external change, and the reload would mint new ids and drop
+            // the row being edited out from under the editor.
+            let a = TodoData(todayDate: today, todayItems: [TodoItem(text: "x", done: false)],
+                             threeDayItems: [], weekItems: [], archiveBody: "")
+            let b = TodoData(todayDate: today, todayItems: [TodoItem(text: "x", done: false)],
+                             threeDayItems: [], weekItems: [], archiveBody: "")
+            check("edit: sameContent ignores freshly-minted ids", a.sameContent(as: b) && a != b)
+            var changed = b
+            changed.todayItems[0].done = true
+            check("edit: sameContent still catches a real change", !a.sameContent(as: changed))
+            var reordered = b
+            reordered.todayItems.append(TodoItem(text: "y", done: false))
+            check("edit: sameContent catches an added item", !a.sameContent(as: reordered))
+
+            let tmpDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hibi-selftest-edit-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+            let file = tmpDir.appendingPathComponent("todos.md")
+            let fixture = """
+            # Todos
+
+            ## 今日 \(today)
+
+            - [ ] 写周报 #work !2 ⏱40m
+
+            """
+            try? fixture.write(to: file, atomically: true, encoding: .utf8)
+
+            let state = AppState(fileURL: file)
+            if let item = state.data.todayItems.first {
+                // What the editor prefills: exactly what quick-add would have accepted,
+                // minus ⏱ — the timer owns that, not the keyboard.
+                let editable = item.editableText
+                check("edit: editable text is the quick-add spelling", editable == "写周报 #work !2", "got '\(editable)'")
+
+                let before = state.data
+                check("edit: feeding the editable text straight back is a no-op",
+                      state.updateText(item.id, raw: editable, in: .today) && state.data.sameContent(as: before))
+
+                check("edit: a real rewrite is accepted",
+                      state.updateText(item.id, raw: "写月报 #ops !1", in: .today))
+                if let after = state.data.todayItems.first {
+                    check("edit: text, tags and quadrant are replaced",
+                          after.text == "写月报" && after.tags == ["ops"] && after.quadrant == .q1,
+                          "got text='\(after.text)' tags=\(after.tags) q=\(String(describing: after.quadrant))")
+                    check("edit: focus minutes survive an edit that never mentions them",
+                          after.focusMinutes == 40, "got \(after.focusMinutes)")
+                    check("edit: the row keeps its id, so the editor survives the save",
+                          after.id == item.id)
+                }
+
+                // An explicit ⏱ marker is still honored — it is the one way to correct a
+                // miscounted total by hand.
+                check("edit: an explicit duration marker overrides the running total",
+                      state.updateText(item.id, raw: "写月报 #ops !1 ⏱5m", in: .today)
+                          && state.data.todayItems.first?.focusMinutes == 5)
+
+                // Degenerate input is refused rather than blanking the task.
+                check("edit: whitespace-only input is refused", !state.updateText(item.id, raw: "   ", in: .today))
+                check("edit: tag/marker-only input is refused", !state.updateText(item.id, raw: "#ops !1", in: .today))
+                check("edit: a refused edit leaves the task untouched",
+                      state.data.todayItems.first?.text == "写月报")
+
+                let onDisk = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+                check("edit: the edit reached disk in canonical order",
+                      onDisk.contains("- [ ] 写月报 #ops !1 ⏱5m"), "got \(onDisk)")
+            } else {
+                check("edit: fixture loaded", false, "today section parsed empty")
+            }
+
+            try? FileManager.default.removeItem(at: tmpDir)
+        }
+
         print(allPass ? "ALL PASS" : "SOME FAILED")
         return allPass
     }
@@ -1885,25 +2416,37 @@ struct HibiApp: App {
         MenuBarExtra {
             PanelView(appState: appState, pomodoro: pomodoro)
         } label: {
-            menuBarLabel
+            MenuBarLabel(appState: appState, pomodoro: pomodoro, ticker: pomodoro.ticker)
         }
         .menuBarExtraStyle(.window)
     }
+}
 
-    @ViewBuilder
-    private var menuBarLabel: some View {
+/// The countdown lives here rather than inline in `HibiApp.body` so the ticking second
+/// only invalidates this view, not the whole scene — a scene rebuild would recreate
+/// `PanelView` and every row's context menu with it (see `PomodoroTicker`).
+struct MenuBarLabel: View {
+    @ObservedObject var appState: AppState
+    @ObservedObject var pomodoro: PomodoroState
+    @ObservedObject var ticker: PomodoroTicker
+
+    var body: some View {
         switch pomodoro.phase {
         case .focus, .paused:
-            Text(pomodoro.timeString)
+            Text(ticker.timeString)
                 .monospacedDigit()
         case .breakTime:
-            Label(pomodoro.timeString, systemImage: "cup.and.saucer.fill")
+            Label(ticker.timeString, systemImage: "cup.and.saucer.fill")
                 .monospacedDigit()
         case .idle:
             if appState.todayRemainingCount > 0 {
-                Label("\(appState.todayRemainingCount)", systemImage: "checklist")
+                Label {
+                    Text("\(appState.todayRemainingCount)")
+                } icon: {
+                    Image(nsImage: CatGlyph.menuBar)
+                }
             } else {
-                Image(systemName: "checklist")
+                Image(nsImage: CatGlyph.menuBar)
             }
         }
     }
