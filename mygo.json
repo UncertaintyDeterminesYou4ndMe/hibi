@@ -1,0 +1,10 @@
+{
+  "name": "Hibi",
+  "identifier": "io.github.uncertaintydeterminesyou4ndme.hibi",
+  "version": "1.0.0",
+  "out": "build",
+  "icon": "icon/AppIcon.iconset/icon_512x512@2x.png",
+  "macos": {
+    "minimumSystemVersion": "13.0"
+  }
+}

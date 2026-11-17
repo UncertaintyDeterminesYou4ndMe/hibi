@@ -1,4 +1,7 @@
 /Hibi
 Hibi.app/
+/build/
+/.mygo/
+mygo_windows_*.syso
 .DS_Store
 icon/AppIcon.icns
