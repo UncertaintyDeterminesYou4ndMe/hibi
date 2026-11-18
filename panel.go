@@ -12,6 +12,9 @@ import (
 )
 
 func (a *app) panelView(c *ui.Context) {
+	if !c.WindowHidden() {
+		a.panelDrawn.Store(true) // drawWhenShown
+	}
 	p := applyPalette(c)
 	paper := paperColor(c, p)
 	c.Root().Background(paper)

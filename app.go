@@ -47,8 +47,11 @@ type app struct {
 	prompt           *mygo.Window
 	promptAllowClose *atomic.Bool
 
-	quitting      atomic.Bool
-	panelShown    atomic.Bool
+	quitting   atomic.Bool
+	panelShown atomic.Bool
+	// panelDrawn tells that a frame of the panel was built while it showed
+	// (drawWhenShown).
+	panelDrawn    atomic.Bool
 	editingActive atomic.Bool
 	reloadPending atomic.Bool
 	watchCancel   context.CancelFunc
@@ -322,16 +325,31 @@ func (a *app) showPanel() {
 	}
 	a.pomodoro.SetFineTicks(true) // the panel shows the seconds
 	a.panelShown.Store(true)
-	// A hidden panel draws nothing, so it still holds the frame it last
-	// showed, with the time of then. Asked for a frame now, Show builds it
-	// before the panel appears (fitBeforeShow), instead of a second later
-	// at the timer's first tick.
-	panel.Invalidate()
+	a.panelDrawn.Store(false)
 	panel.Show()
 	// A popover's window exists once it shows. Floating keeps it above
 	// ordinary windows without taking the input method's popup level.
 	panel.SetAlwaysOnTop(true)
 	a.quickAddHandle.Focus()
+	go a.drawWhenShown(panel)
+}
+
+// drawWhenShown asks the panel for a frame every refresh until one builds
+// while the panel shows, for a second at most. MyGo builds no frame for a
+// window out of sight: it holds the frame until the system says that the
+// window shows again. It hears that for its own windows, but not for the
+// window a popover makes as it opens. So the panel opened with the frame
+// it last showed, with the time of then, until the timer's next tick
+// asked for a frame, up to a second later. Reported as egoist/mygo#2053:
+// once MyGo draws a popover's held frame as it shows, this can go.
+func (a *app) drawWhenShown(panel *mygo.Window) {
+	for range 60 {
+		time.Sleep(16 * time.Millisecond)
+		if a.panelDrawn.Load() || !a.panelShown.Load() {
+			return
+		}
+		panel.Invalidate()
+	}
 }
 
 // newPanel creates the panel, hidden. Hibi makes one and shows it again
