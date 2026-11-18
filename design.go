@@ -46,7 +46,8 @@ func applyPalette(c *ui.Context) palette {
 	t.InactiveAccent = p.Ink
 	t.Danger = p.Ink
 	t.Focus = p.Ink
-	t.Selection = p.Surface
+	// Selected text keeps the system's highlight, from the accent color
+	// in System Settings: a gray of the palette would match a row's fill.
 	t.Radius = 4
 	t.Spacing = 4
 	c.SetTheme(&t)

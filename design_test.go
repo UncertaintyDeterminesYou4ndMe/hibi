@@ -66,3 +66,27 @@ func TestPaletteMeetsWCAGContrast(t *testing.T) {
 		}
 	}
 }
+
+// Selected text keeps the system's highlight: a gray of the palette would
+// vanish into the fill of the row being edited.
+func TestSelectionKeepsTheSystemHighlight(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		var selection, system ui.Color
+		var p palette
+		tt := ui.NewTester(func(c *ui.Context) {
+			system = c.Theme().Selection
+			p = applyPalette(c)
+			selection = c.Theme().Selection
+		}, 100, 100)
+		tt.SetDark(dark)
+		tt.Frame()
+		if selection != system {
+			t.Errorf("dark=%v: selection %v, the system's %v", dark, selection, system)
+		}
+		for _, fill := range []ui.Color{p.Paper, p.Surface, p.Soft} {
+			if selection == fill {
+				t.Errorf("dark=%v: selection is a row fill %v", dark, fill)
+			}
+		}
+	}
+}

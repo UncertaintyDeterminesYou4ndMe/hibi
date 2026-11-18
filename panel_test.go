@@ -383,13 +383,13 @@ func TestPanelSettingsChangeAutoSense(t *testing.T) {
 	}
 }
 
-// Editing a task that wraps keeps it wrapped at the same place, so the rows
-// below do not move; Enter saves, and a line break in the text becomes a
-// space.
+// Editing a task keeps its text where it was, wrapped the same way and no
+// taller, so the rows below do not move; Enter saves, and a line break in
+// the text becomes a space.
 func TestPanelEditKeepsTheLayout(t *testing.T) {
 	a, tt := newPanelTestApp(t)
 	long := "allsum 部署依赖，文档记录，sg staging 集群，sg prod 集群，kafka issues,flink msf"
-	for _, text := range []string{long, "下一项任务"} {
+	for _, text := range []string{"一行的任务", "最后一项", long, "下一项任务"} {
 		if err := a.store.Add(text, todo.Today); err != nil {
 			t.Fatal(err)
 		}
@@ -397,19 +397,25 @@ func TestPanelEditKeepsTheLayout(t *testing.T) {
 	if err := tt.Click("添加待办"); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := tt.Find("下一项任务")
-	if err := tt.RightClick(long); err != nil {
-		t.Fatal(err)
+	edit := func(text, next string) {
+		t.Helper()
+		before, _ := tt.Find(next)
+		if err := tt.RightClick(text); err != nil {
+			t.Fatal(err)
+		}
+		if err := tt.ChooseMenuItem("编辑"); err != nil {
+			t.Fatal(err)
+		}
+		if a.editingID == 0 {
+			t.Fatal("edit did not start")
+		}
+		if during, _ := tt.Find(next); during != before {
+			t.Fatalf("editing %q moved the next row from %v to %v", text, before, during)
+		}
 	}
-	if err := tt.ChooseMenuItem("编辑"); err != nil {
-		t.Fatal(err)
-	}
-	if a.editingID == 0 {
-		t.Fatal("edit did not start")
-	}
-	if during, _ := tt.Find("下一项任务"); during != before {
-		t.Fatalf("the next row moved from %v to %v", before, during)
-	}
+	edit("一行的任务", "最后一项")
+	tt.Key(0, ui.KeyEscape)
+	edit(long, "下一项任务")
 	tt.Key(ui.Cmd, ui.KeyA)
 	tt.Type("第一行\n第二行")
 	if a.editingID == 0 {
@@ -419,7 +425,7 @@ func TestPanelEditKeepsTheLayout(t *testing.T) {
 	if a.editingID != 0 {
 		t.Fatal("Enter did not save")
 	}
-	if got := a.store.Snapshot().TodayItems[0].Text; got != "第一行 第二行" {
+	if got := todayTexts(a)[2]; got != "第一行 第二行" {
 		t.Fatalf("saved %q", got)
 	}
 	if err := tt.RightClick("第一行 第二行"); err != nil {
@@ -430,7 +436,52 @@ func TestPanelEditKeepsTheLayout(t *testing.T) {
 	}
 	tt.Type("不要")
 	tt.Key(0, ui.KeyEscape)
-	if a.editingID != 0 || a.store.Snapshot().TodayItems[0].Text != "第一行 第二行" {
-		t.Fatalf("Escape did not cancel: editing=%d text=%q", a.editingID, a.store.Snapshot().TodayItems[0].Text)
+	if a.editingID != 0 || todayTexts(a)[2] != "第一行 第二行" {
+		t.Fatalf("Escape did not cancel: editing=%d text=%q", a.editingID, todayTexts(a)[2])
+	}
+}
+
+func todayTexts(a *app) []string {
+	var texts []string
+	for _, item := range a.store.Snapshot().TodayItems {
+		texts = append(texts, item.Text)
+	}
+	return texts
+}
+
+// The header keeps its height in every timer state: a header that changed
+// height would resize the panel, which macOS animates.
+func TestPanelHeaderKeepsItsHeight(t *testing.T) {
+	a, tt := newPanelTestApp(t)
+	if err := a.store.Add("第一项待办", todo.Today); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click("添加待办"); err != nil {
+		t.Fatal(err)
+	}
+	firstRow := func() float32 {
+		tt.Frame()
+		r, ok := tt.Find("第一项待办")
+		if !ok {
+			t.Fatal("the task is missing")
+		}
+		return r.Y
+	}
+	want := firstRow()
+	for _, step := range []struct {
+		state string
+		do    func()
+	}{
+		{"focus", func() { a.pomodoro.Start(30) }},
+		{"paused", a.pomodoro.Pause},
+		{"resumed", a.pomodoro.Resume},
+		{"break pending", func() { finishCountdown(a.pomodoro) }},
+		{"break", a.pomodoro.StartBreak},
+		{"idle", a.pomodoro.Stop},
+	} {
+		step.do()
+		if got := firstRow(); got != want {
+			t.Errorf("%s: the list starts at %v, not %v", step.state, got, want)
+		}
 	}
 }

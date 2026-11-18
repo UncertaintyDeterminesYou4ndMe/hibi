@@ -49,6 +49,10 @@ func (a *app) panelView(c *ui.Context) {
 	})
 }
 
+// timerRowHeight holds the tallest of the timer's controls: the break
+// prompt's text button.
+const timerRowHeight = 19
+
 func (a *app) headerView(c *ui.Context, p palette, data todo.Data, timer pomodoroSnapshot) {
 	ui.Column(c).Padding(11, 14, 9, 14).Gap(7).Children(func() {
 		ui.Row(c).FillWidth().Gap(7).AlignItems(ui.Center).Children(func() {
@@ -58,7 +62,9 @@ func (a *app) headerView(c *ui.Context, p palette, data todo.Data, timer pomodor
 			_, done, total := todo.TodayCounts(data, a.activeTag)
 			ui.Text(c, fmt.Sprintf("%d/%d", done, total)).Font("Menlo").FontSize(11).TextColor(p.Muted)
 		})
-		ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		// A fixed height: each timer state has other buttons, and a header
+		// that changes height resizes the panel, which macOS animates.
+		ui.Row(c).FillWidth().Height(timerRowHeight).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Gap(5).AlignItems(ui.Center).Tooltip("今天累计的专注时长，含没有绑定任务的轮次").Children(func() {
 				ui.Text(c, "专注").FontSize(11).TextColor(p.Muted)
 				ui.Text(c, formatFocus(a.todayFocusSeconds(timer))).Font("Menlo").FontSize(11).TextColor(p.Muted)
@@ -218,7 +224,7 @@ func (a *app) taskRow(c *ui.Context, p palette, item todo.Item, tier todo.Tier, 
 			// A text area without a look, at the task text's size: it wraps
 			// as the text did, so the row keeps its height and the text its
 			// place. Enter saves rather than breaking the line.
-			input := ui.TextAreaBase(c.Key("edit"), &a.editText).Grow(1).FontSize(13).TextColor(p.Ink).
+			input := ui.TextAreaBase(c.Key("edit"), &a.editText).Grow(1).Lines(1, 12).FontSize(13).TextColor(p.Ink).
 				Bind(&a.editHandle).AutoFocus().Label("编辑任务").
 				OnTextKey(func(k ui.TextKey) bool {
 					if k.Key != ui.KeyEnter {
