@@ -571,7 +571,7 @@ func (a *app) settingsView(c *ui.Context, p palette) {
 		ui.Text(c, "自动感知").FontSize(10.5).FontWeight(600).TextColor(p.Muted)
 		changed := false
 		settingRow(c, p, "在电脑前时自动开始专注",
-			"启动时、离开后回来时、休息结束时，用上次选的时长开始。点停止后，要等你离开再回来才会再自动开始。",
+			fmt.Sprintf("启动时、离开后回来时、休息结束时，用上次选的时长开始。点停止后，在电脑前的时间仍算专注：%d 分钟后你还没离开，新一轮从停止时算起；离开再回来，新一轮从回来时开始。不想计时请用暂停。", breakMinutes),
 			func() {
 				changed = ui.Switch(c, &a.autoSense.AutoStart).Label("在电脑前时自动开始专注").Changed() || changed
 			})

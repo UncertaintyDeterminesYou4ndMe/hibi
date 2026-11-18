@@ -208,6 +208,114 @@ func TestAutoStartFollowsPresence(t *testing.T) {
 	}
 }
 
+// A stop leaves the user a break. The user who stays at the computer did
+// not take it: the next session starts back at the stop. The user who
+// leaves took it, and the time before leaving counts.
+func TestTimeAtTheComputerAfterAStopCounts(t *testing.T) {
+	clock := &fakeClock{}
+	host := &fakeTimerHost{}
+	p := NewPomodoro(nil, host, 30)
+	p.clock = clock.read
+	defer p.Stop()
+	recorded := func() int {
+		host.mu.Lock()
+		defer host.mu.Unlock()
+		return host.focusSeconds
+	}
+	p.UserPresent()
+	if p.Snapshot().Phase != phaseFocus {
+		t.Fatal("no auto-start at launch")
+	}
+	clock.advance(5 * time.Minute)
+	p.Stop()
+	if got := recorded(); got != 5*60 {
+		t.Fatalf("the stopped session recorded %ds, want 300", got)
+	}
+
+	// Still at the computer: nothing starts within the break, then a
+	// session that began at the stop.
+	clock.advance(breakMinutes*time.Minute - time.Second)
+	p.UserPresent()
+	if got := p.Snapshot(); got.Phase != phaseIdle {
+		t.Fatalf("auto-start within the break after a stop: %#v", got)
+	}
+	clock.advance(time.Second)
+	p.UserPresent()
+	if got := p.Snapshot(); got.Phase != phaseFocus || got.RemainingSeconds != 20*60 || got.SessionElapsedSeconds != 10*60 {
+		t.Fatalf("after the break at the computer: %#v, want 20 minutes left of 30", got)
+	}
+
+	// Left after a stop: the time before leaving counts, and the next
+	// session starts in full on return.
+	before := recorded()
+	p.Stop()
+	clock.advance(9 * time.Minute) // 4 minutes of work, then 5 without input
+	p.UserAway(5 * time.Minute)
+	if got := recorded() - before; got != 10*60+4*60 {
+		t.Fatalf("recorded %ds for the session and after the stop, want 840", got)
+	}
+	p.UserPresent()
+	if got := p.Snapshot(); got.Phase != phaseFocus || got.RemainingSeconds != 30*60 {
+		t.Fatalf("on return after leaving: %#v", got)
+	}
+
+	// Another stop within the break (quitting, the desk API) keeps the
+	// first one's start.
+	p.Stop()
+	clock.advance(6 * time.Minute)
+	p.Stop()
+	clock.advance(4 * time.Minute)
+	p.UserPresent()
+	if got := p.Snapshot(); got.Phase != phaseFocus || got.RemainingSeconds != 20*60 {
+		t.Fatalf("after a second stop: %#v, want the session back at the first", got)
+	}
+
+	// A session shorter than the break keeps a minute; the rest of the
+	// time is recorded at once.
+	p.Start(5)
+	p.Stop()
+	before = recorded()
+	clock.advance(11 * time.Minute)
+	p.UserPresent()
+	if got := p.Snapshot(); got.RemainingSeconds != 60 || got.SessionElapsedSeconds != 4*60 {
+		t.Fatalf("a 5-minute session after the break: %#v", got)
+	}
+	if got := recorded() - before; got != 7*60 {
+		t.Fatalf("recorded %ds at the start, want 420", got)
+	}
+
+	// With auto-start off nothing starts, however long the break, and
+	// nothing after the stop is recorded.
+	p.Stop()
+	p.SetAutoSense(autoSense{EndOnAway: true})
+	before = recorded()
+	clock.advance(time.Hour)
+	p.UserPresent()
+	if got := p.Snapshot(); got.Phase != phaseIdle {
+		t.Fatalf("auto-start with the setting off: %#v", got)
+	}
+	p.Stop()
+	clock.advance(9 * time.Minute)
+	p.UserAway(5 * time.Minute)
+	if got := recorded() - before; got != 0 {
+		t.Fatalf("recorded %ds after a stop with auto-start off, want 0", got)
+	}
+
+	// Turned off and on again after a stop, it does not count the time
+	// since the stop either: the next session starts after leaving.
+	p.SetAutoSense(autoSense{AutoStart: true, EndOnAway: true})
+	p.UserPresent()
+	p.Stop()
+	p.SetAutoSense(autoSense{EndOnAway: true})
+	p.SetAutoSense(autoSense{AutoStart: true, EndOnAway: true})
+	before = recorded()
+	clock.advance(time.Hour)
+	p.UserPresent()
+	if got := p.Snapshot(); got.Phase != phaseIdle || recorded() != before {
+		t.Fatalf("after auto-start off and on: %#v, recorded %ds", got, recorded()-before)
+	}
+}
+
 func TestUserAwayEndsFocusAndCreditsTimeBeforeLeaving(t *testing.T) {
 	store, items := newTaskStore(t, "写报告")
 	host := &fakeTimerHost{}

@@ -100,9 +100,17 @@ type Pomodoro struct {
 	// a task bound mid-session is credited only from then on.
 	boundAtRemaining int
 	// autoArmed makes UserPresent start a focus session. It is set at launch,
-	// when the user leaves the computer and when a break ends; Stop clears it
-	// until the user leaves again.
+	// when the user leaves the computer and when a break ends; Stop clears
+	// it.
 	autoArmed bool
+	// stopRest is set by Stop, at stoppedAt on the monotonic clock, until
+	// the user leaves or a session starts. A stop leaves the user a break
+	// of breakMinutes. The user who leaves takes it, and the time between
+	// the stop and leaving counts as focus. The user who is still at the
+	// computer when it is over did not take it: the next session starts
+	// back at the stop.
+	stopRest  bool
+	stoppedAt time.Duration
 	// autoStart and endOnAway are the settings for UserPresent and UserAway
 	// (autoSense).
 	autoStart bool
@@ -258,7 +266,7 @@ func (p *Pomodoro) beginLocked(task *boundTask, minutes int) settlement {
 		p.boundTaskID, p.boundTaskTier, p.boundTaskText = task.id, task.tier, task.text
 	}
 	p.boundAtRemaining = minutes * 60
-	p.autoArmed = false
+	p.autoArmed, p.stopRest = false, false
 	p.phase = phaseFocus
 	p.runLocked(time.Duration(minutes) * time.Minute)
 	return settle
@@ -282,18 +290,40 @@ func (p *Pomodoro) afterBegin(settle settlement, minutes int) {
 func (p *Pomodoro) SetAutoSense(s autoSense) {
 	p.mu.Lock()
 	p.autoStart, p.endOnAway, p.activityAware = s.AutoStart, s.EndOnAway, s.ActivityAware
+	if !s.AutoStart {
+		// The time after a stop counts only while auto-start is on.
+		p.stopRest = false
+	}
 	p.mu.Unlock()
 }
 
 // UserPresent starts a focus session with the selected length when the user
-// is at the computer, nothing is being timed, and auto-start is on and armed.
+// is at the computer, nothing is being timed, and auto-start is on and armed,
+// or a stop's break is over (stopRest). The presence monitor calls it at
+// least once a minute.
 func (p *Pomodoro) UserPresent() {
 	p.mu.Lock()
-	if !p.autoStart || !p.autoArmed || p.phase != phaseIdle {
+	if !p.autoStart || p.phase != phaseIdle {
 		p.mu.Unlock()
 		return
 	}
+	var since time.Duration // worked since a stop
+	if !p.autoArmed {
+		since = p.clock() - p.stoppedAt
+		if !p.stopRest || since < breakMinutes*time.Minute {
+			p.mu.Unlock()
+			return
+		}
+	}
 	settle := p.beginLocked(nil, 0)
+	if since > 0 {
+		// The session started at the stop; at least a minute is left of
+		// it, and the rest of what was worked is recorded at once.
+		full := time.Duration(p.sessionFocusMinutes) * time.Minute
+		left := max(full-since, time.Minute)
+		p.runLocked(left)
+		settle.focusSeconds += int((since - (full - left)) / time.Second)
+	}
 	p.mu.Unlock()
 	p.afterBegin(settle, 0)
 }
@@ -305,6 +335,15 @@ func (p *Pomodoro) UserPresent() {
 // With endOnAway off, leaving only arms that start.
 func (p *Pomodoro) UserAway(idleFor time.Duration) {
 	p.mu.Lock()
+	if p.stopRest {
+		// Left after a stop: nothing runs, and the time between the stop
+		// and leaving was worked.
+		worked := max(0, p.clock()-idleFor-p.stoppedAt)
+		p.autoArmed, p.stopRest = true, false
+		p.mu.Unlock()
+		p.afterEnd(settlement{focusSeconds: int(worked / time.Second)})
+		return
+	}
 	p.autoArmed = true
 	if !p.endOnAway {
 		p.mu.Unlock()
@@ -352,13 +391,20 @@ func (p *Pomodoro) Resume() {
 	p.changed()
 }
 
-// Stop ends whatever runs. It also turns auto-start off until the user next
-// leaves the computer, so a deliberate stop is not undone a few seconds later.
+// Stop ends whatever runs, and leaves the user a break of breakMinutes
+// (stopRest): auto-start waits for it, so a deliberate stop is not undone
+// a few seconds later. Time at the computer after the stop counts as focus
+// unless the user leaves. With auto-start off, nothing after a stop counts.
 func (p *Pomodoro) Stop() {
 	p.mu.Lock()
+	// Another stop within a stop's break, as the desk API or quitting
+	// sends, keeps the first one's start.
+	if p.phase != phaseIdle || !p.stopRest {
+		p.stoppedAt = p.clock()
+	}
 	settle := p.settleLocked(false, 0)
 	p.endLocked()
-	p.autoArmed = false
+	p.autoArmed, p.stopRest = false, p.autoStart
 	p.mu.Unlock()
 	p.afterEnd(settle)
 }
