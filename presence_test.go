@@ -127,6 +127,13 @@ func TestSitReminder(t *testing.T) {
 	m.now = func() time.Time { return wall }
 	m.mono = func() time.Duration { return mono }
 	m.onSit = func(d time.Duration) { sat = append(sat, d) }
+	var periods []int
+	m.onSitPeriods = func(n int, every time.Duration) {
+		if every != 30*time.Minute && n > 0 {
+			t.Errorf("sitEvery %v", every)
+		}
+		periods = append(periods, n)
+	}
 	m.sitEvery.Store(int64(30 * time.Minute))
 	// sit polls as the monitor asks, typing a key now and then (idle stays
 	// under a minute), until until has passed.
@@ -140,10 +147,16 @@ func TestSitReminder(t *testing.T) {
 	if len(sat) != 2 || sat[0] < 30*time.Minute || sat[0] > 31*time.Minute || sat[1] < 60*time.Minute || sat[1] > 61*time.Minute {
 		t.Fatalf("reminders at %v, want about 30m and 60m", sat)
 	}
+	if !slices.Equal(periods, []int{1, 2}) {
+		t.Fatalf("sitting periods told %v, want [1 2]", periods)
+	}
 
 	// A walk of three minutes without input: sitting starts over.
 	idle = sitBreak
 	m.poll()
+	if !slices.Equal(periods, []int{1, 2, 0}) {
+		t.Fatalf("sitting periods told %v after the walk, want [1 2 0]", periods)
+	}
 	idle = 0
 	sat = nil
 	sit(29 * time.Minute)

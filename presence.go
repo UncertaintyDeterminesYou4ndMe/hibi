@@ -110,6 +110,10 @@ type presenceMonitor struct {
 	sitEvery atomic.Int64
 	// onSit is told how long the user has sat, each sitEvery of sitting.
 	onSit func(sat time.Duration)
+	// onSitPeriods is told how many whole sitEvery the user has sat since
+	// the last break, each time that number changes: up at every onSit,
+	// and back to 0 when the user gets up.
+	onSitPeriods func(periods int, sitEvery time.Duration)
 
 	away     bool
 	polled   bool
@@ -122,6 +126,7 @@ type presenceMonitor struct {
 	sitting      bool
 	sitSince     time.Duration
 	sitReminders int
+	sitPeriods   int // last told onSitPeriods
 }
 
 func newPresenceMonitor(idle func() time.Duration, target presenceTarget) *presenceMonitor {
@@ -216,6 +221,16 @@ func (m *presenceMonitor) poll() time.Duration {
 			if m.onSit != nil {
 				m.onSit(sat)
 			}
+		}
+	}
+	periods := 0
+	if m.sitting {
+		periods = m.sitReminders
+	}
+	if periods != m.sitPeriods {
+		m.sitPeriods = periods
+		if m.onSitPeriods != nil {
+			m.onSitPeriods(periods, sitEvery)
 		}
 	}
 

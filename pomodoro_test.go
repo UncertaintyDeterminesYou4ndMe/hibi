@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"image/png"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -447,6 +449,63 @@ func TestTrayTitleShowsNoTimeLeft(t *testing.T) {
 	} {
 		if got := trayTitle(tc.snapshot, tc.open); got != tc.want {
 			t.Fatalf("trayTitle(%v, %d)=%q want %q", tc.snapshot.Phase, tc.open, got, tc.want)
+		}
+	}
+}
+
+// Each mood has its own menu bar icon, 16 points at 2x.
+func TestTrayCatHasAnIconForEachMood(t *testing.T) {
+	seen := map[string]catMood{}
+	for mood := moodAwake; mood <= moodAsleep; mood++ {
+		icon := trayIcon(mood)
+		if other, ok := seen[string(icon)]; ok {
+			t.Fatalf("moods %d and %d share an icon", other, mood)
+		}
+		seen[string(icon)] = mood
+		img, err := png.Decode(bytes.NewReader(icon))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b := img.Bounds(); b.Dx() != 32 || b.Dy() != 32 {
+			t.Fatalf("mood %d: icon is %v, want 32x32", mood, b)
+		}
+	}
+}
+
+// The cat tires with the day's focus and with sitting, whichever is more
+// tiring, and sleeps through a break.
+func TestCatMood(t *testing.T) {
+	h := time.Hour
+	half := sitting{sitEvery: 30 * time.Minute}
+	sat := func(periods int) sitting { s := half; s.periods = periods; return s }
+	for _, tc := range []struct {
+		phase pomodoroPhase
+		today time.Duration
+		sat   sitting
+		mood  catMood
+		tip   string
+	}{
+		{phaseFocus, 0, sitting{}, moodAwake, ""},
+		{phaseIdle, 3*h + 59*time.Minute, sat(0), moodAwake, ""},
+		{phaseFocus, 4 * h, sat(0), moodTired, "有点累了：今天已经专注 4 小时"},
+		{phaseFocus, 6*h + time.Minute, sat(0), moodWeary, "很累了：今天已经专注 6 小时"},
+		{phaseFocus, 9 * h, sat(0), moodExhausted, "累坏了：今天已经专注 8 小时"},
+		{phaseFocus, h, sat(1), moodTired, "有点累了：已经连续坐了 30 分钟"},
+		{phasePaused, h, sat(2), moodWeary, "很累了：已经连续坐了 60 分钟"},
+		{phaseIdle, h, sat(5), moodExhausted, "累坏了：已经连续坐了 150 分钟"},
+		// Both reach the mood: both say why.
+		{phaseFocus, 4 * h, sat(1), moodTired, "有点累了：今天已经专注 4 小时，已经连续坐了 30 分钟"},
+		// The more tiring one decides.
+		{phaseFocus, 6 * h, sat(1), moodWeary, "很累了：今天已经专注 6 小时"},
+		// The sitting reminder is off: sitting does not count.
+		{phaseFocus, h, sitting{periods: 3}, moodAwake, ""},
+		// A break: asleep, however tired.
+		{phaseBreak, 9 * h, sat(4), moodAsleep, "休息中"},
+		{phaseBreakPending, 4 * h, sat(0), moodTired, "有点累了：今天已经专注 4 小时"},
+	} {
+		mood, tip := catMoodFor(tc.phase, tc.today, tc.sat)
+		if mood != tc.mood || tip != tc.tip {
+			t.Errorf("catMoodFor(%v, %v, %+v) = %d %q, want %d %q", tc.phase, tc.today, tc.sat, mood, tip, tc.mood, tc.tip)
 		}
 	}
 }

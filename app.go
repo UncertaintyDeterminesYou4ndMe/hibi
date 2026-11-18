@@ -31,9 +31,15 @@ type app struct {
 	pomodoro *Pomodoro
 	focusLog *focusLog
 
-	// trayTitle is the title last sent to the tray, so a tick that leaves it
-	// unchanged does not wake the main thread.
+	// trayTitle, trayMood and trayTip are the title, the icon and the
+	// tooltip last sent to the tray, so a tick that leaves them unchanged
+	// does not wake the main thread.
 	trayTitle atomic.Value
+	trayMood  atomic.Int32
+	trayTip   atomic.Value
+	// sitting is what the presence monitor last said about sitting, for the
+	// cat's mood.
+	sitting atomic.Value
 
 	panelMu          sync.RWMutex
 	tray             *mygo.Tray
@@ -176,6 +182,8 @@ func (a *app) applyAutoSense(s autoSense) {
 			a.presenceCancel()
 		}
 		a.presence, a.presenceCancel = nil, nil
+		a.sitting.Store(sitting{}) // nobody counts the sitting now
+		a.refreshTray()
 		return
 	}
 	threshold := time.Duration(s.AwayMinutes) * time.Minute
@@ -191,6 +199,7 @@ func (a *app) applyAutoSense(s autoSense) {
 	a.presence.threshold.Store(int64(threshold))
 	a.presence.sitEvery.Store(int64(s.sitEvery()))
 	a.presence.onSit = a.sitTooLong
+	a.presence.onSitPeriods = a.sitPeriodsChanged
 	ctx, cancel := context.WithCancel(context.Background())
 	a.presenceCancel = cancel
 	go a.presence.run(ctx)
@@ -404,19 +413,45 @@ func (a *app) closePanel() {
 // TimerChanged also handles store changes. MyGo hops window/tray updates to
 // the main thread, so ticker and watcher goroutines may call it directly.
 func (a *app) TimerChanged() {
-	tray, panel := a.currentTray(), a.currentPanel()
-	if tray != nil {
-		remaining, _, _ := todo.TodayCounts(a.store.Snapshot(), "")
-		title := trayTitle(a.pomodoro.Snapshot(), remaining)
-		// The title changes with the phase; the timer ticks every second.
-		// SetTitle waits for the main thread, so skip repeats.
-		if previous, ok := a.trayTitle.Swap(title).(string); !ok || previous != title {
-			tray.SetTitle(title)
-		}
-	}
-	if panel != nil && a.panelShown.Load() {
+	a.refreshTray()
+	if panel := a.currentPanel(); panel != nil && a.panelShown.Load() {
 		panel.Update(func() {})
 	}
+}
+
+// refreshTray brings the menu bar title, icon and tooltip up to date. The
+// title and the icon change with the phase, the day's focus and the
+// sitting; the timer ticks every second. SetTitle, SetIcon and SetToolTip
+// wait for the main thread, so it skips repeats.
+func (a *app) refreshTray() {
+	tray := a.currentTray()
+	if tray == nil {
+		return
+	}
+	remaining, _, _ := todo.TodayCounts(a.store.Snapshot(), "")
+	timer := a.pomodoro.Snapshot()
+	title := trayTitle(timer, remaining)
+	if previous, ok := a.trayTitle.Swap(title).(string); !ok || previous != title {
+		tray.SetTitle(title)
+	}
+	sat, _ := a.sitting.Load().(sitting)
+	today := time.Duration(a.todayFocusSeconds(timer)) * time.Second
+	mood, tip := catMoodFor(timer.Phase, today, sat)
+	if catMood(a.trayMood.Swap(int32(mood))) != mood {
+		if err := tray.SetIcon(trayIcon(mood), true); err != nil {
+			log.Print("tray icon: ", err)
+		}
+	}
+	if previous, ok := a.trayTip.Swap(tip).(string); !ok || previous != tip {
+		tray.SetToolTip(tip)
+	}
+}
+
+// sitPeriodsChanged is the presence monitor telling how long the user has
+// sat, on its goroutine.
+func (a *app) sitPeriodsChanged(periods int, sitEvery time.Duration) {
+	a.sitting.Store(sitting{periods, sitEvery})
+	a.refreshTray()
 }
 
 // trayTitle is the menu bar text beside the icon. It shows no time left: a

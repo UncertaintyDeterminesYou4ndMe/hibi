@@ -139,7 +139,7 @@ func (a *app) pomodoroView(c *ui.Context, p palette, timer pomodoroSnapshot) {
 		})
 	case phaseBreak:
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			glyph(c, "", icons.cat, 14, p.Muted)
+			glyph(c, "", icons.catAsleep, 14, p.Muted)
 			ui.Text(c, timer.TimeString()).Font("Menlo").FontSize(11).TextColor(p.Muted)
 			if iconButton(c, "arrow.right", icons.arrow, "跳过休息", p).Clicked() {
 				a.pomodoro.Skip()
@@ -701,7 +701,7 @@ func (a *app) breakPromptView(c *ui.Context) {
 				if textButton(c, "arrow.right", icons.arrow, "跳过", "跳过休息", p).Clicked() {
 					a.pomodoro.Skip()
 				}
-				if textButton(c, "", icons.cat, "开始休息", "开始休息", p).Clicked() {
+				if textButton(c, "", icons.catAsleep, "开始休息", "开始休息", p).Clicked() {
 					a.pomodoro.StartBreak()
 				}
 			})
