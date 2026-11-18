@@ -322,6 +322,11 @@ func (a *app) showPanel() {
 	}
 	a.pomodoro.SetFineTicks(true) // the panel shows the seconds
 	a.panelShown.Store(true)
+	// A hidden panel draws nothing, so it still holds the frame it last
+	// showed, with the time of then. Asked for a frame now, Show builds it
+	// before the panel appears (fitBeforeShow), instead of a second later
+	// at the timer's first tick.
+	panel.Invalidate()
 	panel.Show()
 	// A popover's window exists once it shows. Floating keeps it above
 	// ordinary windows without taking the input method's popup level.
