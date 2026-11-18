@@ -540,10 +540,17 @@ func TestTimerRunsOnRealTime(t *testing.T) {
 	p.Start(40)
 	p.SetFineTicks(true)
 	setRemaining(p, 2)
+	// The phase changes before the prompt shows, outside the lock: wait
+	// for both.
+	prompted := func() bool {
+		host.mu.Lock()
+		defer host.mu.Unlock()
+		return host.prompts > 0
+	}
 	deadline := time.Now().Add(5 * time.Second)
-	for p.Snapshot().Phase != phaseBreakPending {
+	for p.Snapshot().Phase != phaseBreakPending || !prompted() {
 		if time.Now().After(deadline) {
-			t.Fatalf("countdown did not end: %#v", p.Snapshot())
+			t.Fatalf("countdown did not end with a prompt: %#v", p.Snapshot())
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
