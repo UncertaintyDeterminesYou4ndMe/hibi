@@ -2,7 +2,7 @@
 # 把 hibi 装进「登录即启动」：写 LaunchAgent 并立即加载。
 set -euo pipefail
 
-APP="$HOME/code/hibi/Hibi.app/Contents/MacOS/Hibi"
+APP="/Applications/Hibi.app/Contents/MacOS/Hibi" # build.sh installs it there
 PLIST="$HOME/Library/LaunchAgents/io.github.hibi.startatlogin.plist"
 LABEL="io.github.hibi.startatlogin"
 

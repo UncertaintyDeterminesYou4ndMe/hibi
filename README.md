@@ -41,12 +41,11 @@ bash build.sh
 
 This runs the tests and produces:
 - `Hibi` — standalone executable
-- `Hibi.app` — an ad-hoc signed app bundle
-- `build/darwin-<arch>/Hibi.app` — MyGo’s native build artifact
+- `build/darwin-<arch>/Hibi.app` — an ad-hoc signed app bundle, MyGo’s native build artifact
+
+On macOS it also installs that `Hibi.app` into `/Applications`, where Spotlight and Launchpad find it, quits a running Hibi and opens the new one. `bash scripts/install-launchagent.sh` opens that Hibi at login.
 
 For development with automatic rebuilds, run `go tool mygo dev`.
-
-Drag `Hibi.app` into `/Applications` (or run it in place).
 
 ### Gatekeeper
 
@@ -211,4 +210,4 @@ Tests use temp directories, never your real `~/todos.md`. They cover parsing/ser
 
 Hibi（日々，"日复一日"）现在使用 Go + MyGo 原生 UI 实现，不使用 WebView、JavaScript 或 cgo。它仍是零账号、零数据库、纯 Markdown 的 macOS 菜单栏待办应用，数据完全保存在 `~/todos.md`，可以用任意编辑器直接打开修改。核心能力包括：今日/三日/本周三档时间层级、四象限优先级标记、双击原地编辑（`正文 #标签 !象限`，回车保存，Esc 放弃）、绑定任务的番茄钟（5/15/30/40/50/60 分钟并记住选择，休息 10 分钟，累计专注时长自动写回；专注结束显示置顶提醒，未应答时每分钟提示，最多 10 次；休息结束发系统通知和提示音）、自动计时（你在电脑前且没有在计时时自动开始一轮专注：启动时、离开后回来时、休息结束后；5 分钟无键鼠输入或睡眠视为离开，本轮结束并算作休息，任务只记离开前的时长；久坐提醒（连续坐 30/45/60 分钟、中间没有 3 分钟以上的停顿，就发通知提醒起来走 3 分钟，倒计时不停）；识别视频、会议和打字（播放视频或开会时不碰电脑也不算离开；专注结束时正在打字就等停顿 8 秒再提醒，最多 3 分钟，开会就等会议结束，最多 1 小时；只读系统状态，不截屏、不读内容）；自动开始、离开结束、离开判定时长（3/5/10/15/30 分钟）、久坐提醒和识别视频会议打字都可以在面板的设置里调整，全部关闭时不读取键鼠空闲时间；跳过休息直接进入下一轮；手动停止后在电脑前的时间仍算专注（10 分钟后还没离开，新一轮从停止时算起；离开就记到离开前，回来再开始；不想计时用暂停）；计时中点任务的播放按钮会把当前这一轮改记到该任务，倒计时不重置）、菜单栏图标是一只小猫的头，会随一天的工作慢慢变累（每到一次久坐提醒就累一档，起身后恢复；当天专注满 4、6、8 小时分别是有点累、很累、累坏了，到第二天才恢复；取两者中更累的一档，鼠标悬停能看到原因；久坐这一项只在开着久坐提醒时计算），休息时闭眼睡觉，不显示剩余时间（专注中只有图标，暂停、休息时只显示“暂停”“休息”）、面板顶部显示今日专注总时长（含未绑定任务的轮次）、全局快捷键 ⌃⌥H 在任何应用里呼出面板（可在 settings.json 的 hotkey 修改，关闭面板后焦点回到原应用）、任务列表键盘操作（输入框里按 ↑↓ 进入列表；空格完成、↩ 编辑、F 计时、1~4 设象限、0 清除、⌘⌫ 删除、⌘↑↓ 移到上一档或下一档、Esc 回到输入框）、标签筛选、外部文件变更自动重载，以及跨日完成项归档。
 
-构建：安装 Go 1.27.3+ 后运行 `bash build.sh`，会执行测试并产出 `Hibi` 和 `Hibi.app`。开发时可运行 `go tool mygo dev`。自测：`./Hibi --selftest`；完整测试：`go test ./...`。首次打开 ad-hoc 签名应用时，按上文 Gatekeeper 一节右键打开。数据文件格式与快捷键保持兼容，详见上文。
+构建：安装 Go 1.27.3+ 后运行 `bash build.sh`，会执行测试并产出 `Hibi` 和 `build/` 下的 `Hibi.app`，在 macOS 上还会把 `Hibi.app` 装进 `/Applications`（Spotlight 和启动台能找到），并打开它；`bash scripts/install-launchagent.sh` 设为登录时打开。开发时可运行 `go tool mygo dev`。自测：`./Hibi --selftest`；完整测试：`go test ./...`。首次打开 ad-hoc 签名应用时，按上文 Gatekeeper 一节右键打开。数据文件格式与快捷键保持兼容，详见上文。
