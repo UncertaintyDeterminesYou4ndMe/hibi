@@ -22,6 +22,12 @@ func main() {
 	}
 
 	mygo.App.SetName("Hibi")
+	// One Hibi at a time: a second would show a second icon, time a second
+	// session and find the desk API's port taken. Opened again, Hibi hands
+	// over to the one that runs, which opens its panel (OnSecondInstance).
+	if !mygo.App.RequestSingleInstanceLock() {
+		return
+	}
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -33,6 +39,7 @@ func main() {
 	}
 	a := newApp(store)
 	mygo.App.OnWindowAllClosed(func() {})
+	mygo.App.OnSecondInstance(func([]string, string) { a.openPanel() })
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.quitting.Store(true) })
 	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
 		if a.deskAPIStop != nil {

@@ -316,6 +316,18 @@ func (a *app) togglePanel() {
 	a.showPanel()
 }
 
+// openPanel shows the panel unless it shows already, as Hibi is opened
+// again while it runs. Main thread only.
+func (a *app) openPanel() {
+	if a.currentTray() == nil {
+		return // not ready yet
+	}
+	if panel := a.currentPanel(); panel != nil && panel.IsVisible() {
+		return
+	}
+	a.togglePanel()
+}
+
 func (a *app) showPanel() {
 	a.reloadFromDisk()
 	mygo.App.Show() // hiding the panel last time may have hidden Hibi
