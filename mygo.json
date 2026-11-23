@@ -5,6 +5,9 @@
   "out": "build",
   "icon": "icon/AppIcon.iconset/icon_512x512@2x.png",
   "macos": {
-    "minimumSystemVersion": "13.0"
+    "minimumSystemVersion": "13.0",
+    "infoPlist": {
+      "LSUIElement": true
+    }
   }
 }

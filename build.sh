@@ -21,6 +21,11 @@ if [ "$(go env GOOS)" = "darwin" ]; then
   INSTALLED="/Applications/${APP_NAME}.app"
   echo "==> Installing ${INSTALLED}"
   killall "${APP_NAME}" 2>/dev/null || true
+  # open fails (error -600) while the old Hibi is still quitting.
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pgrep -x "${APP_NAME}" >/dev/null || break
+    sleep 0.5
+  done
   rm -rf "${INSTALLED}"
   ditto "${BUILT}" "${INSTALLED}"
   # Spotlight would list the build's copy as a second Hibi.
