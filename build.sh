@@ -23,8 +23,10 @@ if [ "$(go env GOOS)" = "darwin" ]; then
   killall "${APP_NAME}" 2>/dev/null || true
   rm -rf "${INSTALLED}"
   ditto "${BUILT}" "${INSTALLED}"
+  # Spotlight would list the build's copy as a second Hibi.
+  rm -rf "${BUILT}"
   open "${INSTALLED}"
-  echo "==> Done: ./${APP_NAME}, ${BUILT} and ${INSTALLED}"
+  echo "==> Done: ./${APP_NAME} and ${INSTALLED}"
 else
   echo "==> Done. MyGo artifacts are in build/"
 fi
