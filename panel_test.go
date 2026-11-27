@@ -158,11 +158,32 @@ func TestBreakPromptAndIcons(t *testing.T) {
 	}
 	a, _ := newPanelTestApp(t)
 	a.pomodoro.Start(5)
-	tt := ui.NewTester(a.breakPromptView, 320, 220)
+	tt := ui.NewTester(a.breakPromptView, 320, 260)
 	if !tt.HasText("专注结束") || !tt.HasText("开始休息") || !tt.HasText("跳过") {
 		t.Fatalf("break prompt texts = %q", tt.Texts())
 	}
 	a.pomodoro.Stop()
+}
+
+func TestBreakPromptSaysTheStreakAndFitsTheTipToIt(t *testing.T) {
+	a, _ := newPanelTestApp(t)
+	defer a.pomodoro.Stop()
+	a.pomodoro.Start(30)
+	finishCountdown(a.pomodoro)
+	tt := ui.NewTester(a.breakPromptView, 320, 260)
+	if tt.HasText("已经连续专注 30 分钟，中间没有休息") || !tt.HasText("上个厕所，倒杯水，走一走。") {
+		t.Fatalf("first prompt = %q", tt.Texts())
+	}
+
+	a.pomodoro.Start(60)
+	finishCountdown(a.pomodoro)
+	a.pomodoro.Skip()
+	finishCountdown(a.pomodoro)
+	tt = ui.NewTester(a.breakPromptView, 320, 260)
+	if !tt.HasText("60 分钟，完成。") || !tt.HasText("已经连续专注 150 分钟，中间没有休息") ||
+		!tt.HasText("太久没休息了，这次别跳过：去爬几层楼梯，再做一组俯卧撑。") {
+		t.Fatalf("prompt after a skipped break = %q", tt.Texts())
+	}
 }
 
 func TestPanelRendersOverVibrancy(t *testing.T) {

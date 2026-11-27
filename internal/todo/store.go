@@ -86,10 +86,13 @@ func (s *Store) Reload() error {
 	return nil
 }
 
+// ErrEmptyText is the error of a task without text.
+var ErrEmptyText = errors.New("todo: empty task text")
+
 func (s *Store) Add(raw string, tier Tier) error {
 	item, ok := ParseInput(raw)
 	if !ok {
-		return errors.New("任务正文不能为空")
+		return ErrEmptyText
 	}
 	return s.mutate(func(data *Data) {
 		items := data.Items(tier)

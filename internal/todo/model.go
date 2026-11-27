@@ -31,19 +31,6 @@ const (
 	Week
 )
 
-func (t Tier) String() string {
-	switch t {
-	case Today:
-		return "今日"
-	case ThreeDay:
-		return "三日"
-	case Week:
-		return "本周"
-	default:
-		return "未知"
-	}
-}
-
 var nextItemID atomic.Uint64
 
 // Item is one Markdown task. ID is deliberately session-local: the file format
@@ -143,15 +130,6 @@ func (d *Data) Items(tier Tier) *[]Item {
 }
 
 func TodayDate(now time.Time) string { return now.Format("2006-01-02") }
-
-func HeaderDisplay(dateString string) string {
-	date, err := time.ParseInLocation("2006-01-02", dateString, time.Local)
-	if err != nil {
-		return dateString
-	}
-	weekdays := [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
-	return fmt.Sprintf("%d月%d日 %s", int(date.Month()), date.Day(), weekdays[date.Weekday()])
-}
 
 // Sorted returns display order without changing serialized file order.
 func Sorted(items []Item) []Item {

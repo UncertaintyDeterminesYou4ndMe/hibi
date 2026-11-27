@@ -5,9 +5,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/UncertaintyDeterminesYou4ndMe/hibi/internal/todo"
+	"github.com/UncertaintyDeterminesYou4ndMe/hibi/locales"
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/i18n"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -59,8 +62,8 @@ const timerRowHeight = 19
 func (a *app) headerView(c *ui.Context, p palette, data todo.Data, timer pomodoroSnapshot) {
 	ui.Column(c).Padding(11, 14, 9, 14).Gap(7).Children(func() {
 		ui.Row(c).FillWidth().Gap(7).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "今日").FontSize(13).FontWeight(600).TextColor(p.Ink)
-			ui.Text(c, todo.HeaderDisplay(data.TodayDate)).FontSize(11).TextColor(p.Muted)
+			ui.Text(c, locales.TierToday()).FontSize(13).FontWeight(600).TextColor(p.Ink)
+			ui.Text(c, headerDate(c.Locale(), data.TodayDate)).FontSize(11).TextColor(p.Muted)
 			ui.Spacer(c)
 			_, done, total := todo.TodayCounts(data, a.activeTag)
 			ui.Text(c, fmt.Sprintf("%d/%d", done, total)).Font("Menlo").FontSize(11).TextColor(p.Muted)
@@ -68,13 +71,13 @@ func (a *app) headerView(c *ui.Context, p palette, data todo.Data, timer pomodor
 		// A fixed height: each timer state has other buttons, and a header
 		// that changes height resizes the panel, which macOS animates.
 		ui.Row(c).FillWidth().Height(timerRowHeight).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Row(c).Gap(5).AlignItems(ui.Center).Tooltip("今天累计的专注时长，含没有绑定任务的轮次").Children(func() {
-				ui.Text(c, "专注").FontSize(11).TextColor(p.Muted)
+			ui.Row(c).Gap(5).AlignItems(ui.Center).Tooltip(locales.FocusTotalTip()).Children(func() {
+				ui.Text(c, locales.FocusTotal()).FontSize(11).TextColor(p.Muted)
 				ui.Text(c, formatFocus(a.todayFocusSeconds(timer))).Font("Menlo").FontSize(11).TextColor(p.Muted)
 			})
 			if a.activeTag != "" {
 				tag := a.activeTag
-				b := ui.ButtonBase(c).Label("清除标签筛选 #"+tag).Padding(3, 7).Background(p.Ink).Radius(4)
+				b := ui.ButtonBase(c).Label(locales.ClearTagFilter(tag)).Padding(3, 7).Background(p.Ink).Radius(4)
 				b.Children(func() {
 					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
 						ui.Text(c, "#"+tag).FontSize(11).FontWeight(500).TextColor(p.Paper)
@@ -94,7 +97,7 @@ func (a *app) headerView(c *ui.Context, p palette, data todo.Data, timer pomodor
 func (a *app) pomodoroView(c *ui.Context, p palette, timer pomodoroSnapshot) {
 	switch timer.Phase {
 	case phaseIdle:
-		b := ui.ButtonBase(c).Label("开始专注").Tooltip("选择专注时长").Padding(3, 4).Radius(4)
+		b := ui.ButtonBase(c).Label(locales.StartFocus()).Tooltip(locales.ChooseFocusLength()).Padding(3, 4).Radius(4)
 		if b.Hovered() || b.Pressed() {
 			b.Background(p.Surface)
 		}
@@ -107,7 +110,7 @@ func (a *app) pomodoroView(c *ui.Context, p palette, timer pomodoroSnapshot) {
 		})
 		b.Menu(func(m *ui.Menu) {
 			for _, minutes := range focusPresets {
-				if m.Item(fmt.Sprintf("%d 分钟", minutes)).Chosen() {
+				if m.Item(locales.Minutes(minutes)).Chosen() {
 					a.pomodoro.Start(minutes)
 				}
 			}
@@ -119,24 +122,24 @@ func (a *app) pomodoroView(c *ui.Context, p palette, timer pomodoroSnapshot) {
 			}
 			ui.Text(c, timer.TimeString()).Font("Menlo").FontSize(11).TextColor(p.Ink)
 			if timer.Phase == phaseFocus {
-				if iconButton(c, "pause.fill", icons.pause, "暂停", p).Clicked() {
+				if iconButton(c, "pause.fill", icons.pause, locales.Pause(), p).Clicked() {
 					a.pomodoro.Pause()
 				}
-			} else if iconButton(c, "play.fill", icons.play, "继续", p).Clicked() {
+			} else if iconButton(c, "play.fill", icons.play, locales.Resume(), p).Clicked() {
 				a.pomodoro.Resume()
 			}
-			if iconButton(c, "stop.fill", icons.stop, "停止并结算", p).Clicked() {
+			if iconButton(c, "stop.fill", icons.stop, locales.StopAndRecord(), p).Clicked() {
 				a.pomodoro.Stop()
 			}
 		})
 	case phaseBreakPending:
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			glyph(c, "", icons.cat, 14, p.Muted)
-			ui.Text(c, "该休息了").FontSize(10).FontWeight(600)
-			if textButton(c, "", nil, "开始", "开始休息", p).Clicked() {
+			ui.Text(c, locales.BreakDue()).FontSize(10).FontWeight(600)
+			if textButton(c, "", nil, locales.Start(), locales.StartBreak(), p).Clicked() {
 				a.pomodoro.StartBreak()
 			}
-			if iconButton(c, "arrow.right", icons.arrow, "跳过休息", p).Clicked() {
+			if iconButton(c, "arrow.right", icons.arrow, locales.SkipBreak(), p).Clicked() {
 				a.pomodoro.Skip()
 			}
 		})
@@ -144,7 +147,7 @@ func (a *app) pomodoroView(c *ui.Context, p palette, timer pomodoroSnapshot) {
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			glyph(c, "", icons.catAsleep, 14, p.Muted)
 			ui.Text(c, timer.TimeString()).Font("Menlo").FontSize(11).TextColor(p.Muted)
-			if iconButton(c, "arrow.right", icons.arrow, "跳过休息", p).Clicked() {
+			if iconButton(c, "arrow.right", icons.arrow, locales.SkipBreak(), p).Clicked() {
 				a.pomodoro.Skip()
 			}
 		})
@@ -154,16 +157,16 @@ func (a *app) pomodoroView(c *ui.Context, p palette, timer pomodoroSnapshot) {
 func (a *app) sectionsView(c *ui.Context, p palette, data todo.Data, timer pomodoroSnapshot) {
 	if a.activeTag == "" {
 		if len(data.TodayItems) == 0 {
-			emptyState(c, p, "今天没有待办")
+			emptyState(c, p, locales.EmptyToday())
 		} else {
 			a.sectionView(c, p, data, timer, todo.Today, "")
 		}
 		if len(data.ThreeDayItems) > 0 {
-			sectionHeading(c, p, "三日")
+			sectionHeading(c, p, tierName(todo.ThreeDay))
 			a.sectionView(c, p, data, timer, todo.ThreeDay, "")
 		}
 		if len(data.WeekItems) > 0 {
-			sectionHeading(c, p, "本周")
+			sectionHeading(c, p, tierName(todo.Week))
 			a.sectionView(c, p, data, timer, todo.Week, "")
 		}
 		return
@@ -174,12 +177,12 @@ func (a *app) sectionsView(c *ui.Context, p palette, data todo.Data, timer pomod
 		if len(items) == 0 {
 			continue
 		}
-		sectionHeading(c, p, tier.String())
+		sectionHeading(c, p, tierName(tier))
 		a.sectionView(c, p, data, timer, tier, "")
 		matches += len(items)
 	}
 	if matches == 0 {
-		emptyState(c, p, "没有匹配的任务")
+		emptyState(c, p, locales.EmptyFilter())
 	}
 }
 
@@ -212,7 +215,7 @@ func (a *app) taskRow(c *ui.Context, p palette, item todo.Item, tier todo.Tier, 
 		} else {
 			ui.Box(c).Width(2).Height(24)
 		}
-		check := ui.ButtonBase(c).Size(22, 22).Label("切换 " + item.Text).Tooltip("完成 / 取消完成").Padding(4).Radius(4)
+		check := ui.ButtonBase(c).Size(22, 22).Label(locales.ToggleTask(item.Text)).Tooltip(locales.ToggleTaskTip()).Padding(4).Radius(4)
 		check.Children(func() {
 			if item.Done {
 				ui.Icon(c, icons.check).Size(12, 12).TextColor(p.Muted)
@@ -228,7 +231,7 @@ func (a *app) taskRow(c *ui.Context, p palette, item todo.Item, tier todo.Tier, 
 			// as the text did, so the row keeps its height and the text its
 			// place. Enter saves rather than breaking the line.
 			input := ui.TextAreaBase(c.Key("edit"), &a.editText).Grow(1).Lines(1, 12).FontSize(13).TextColor(p.Ink).
-				Bind(&a.editHandle).AutoFocus().Label("编辑任务").
+				Bind(&a.editHandle).AutoFocus().Label(locales.EditTask()).
 				OnTextKey(func(k ui.TextKey) bool {
 					if k.Key != ui.KeyEnter {
 						return false
@@ -266,7 +269,7 @@ func (a *app) taskRow(c *ui.Context, p palette, item todo.Item, tier todo.Tier, 
 			if len(item.Tags) > 0 || item.FocusMinutes > 0 || item.Quadrant != todo.QuadrantNone {
 				ui.Row(c).Gap(5).Wrap().AlignItems(ui.Center).Children(func() {
 					for _, tag := range item.Tags {
-						b := ui.ButtonBase(c).Label("筛选 #" + tag)
+						b := ui.ButtonBase(c).Label(locales.FilterTag(tag))
 						b.Children(func() { ui.Text(c, "#"+tag).FontSize(11).TextColor(p.Muted) })
 						if b.Clicked() {
 							if a.activeTag == tag {
@@ -285,18 +288,18 @@ func (a *app) taskRow(c *ui.Context, p palette, item todo.Item, tier todo.Tier, 
 
 		running := timer.Phase == phaseFocus || timer.Phase == phasePaused
 		bound := running && timer.BoundTaskID == item.ID && timer.BoundTaskTier == tier
-		playLabel := "开始专注"
+		playLabel := locales.StartFocus()
 		if running {
-			playLabel = "改为给此任务计时，倒计时继续"
+			playLabel = locales.TimeThisTask()
 		}
 		ui.Row(c).Width(38).Gap(4).AlignItems(ui.Center).Children(func() {
 			if row.Hovered() || bound || selected {
 				if bound {
-					glyph(c, "timer", icons.timer, 12, p.Ink).Label("正在为此任务计时")
+					glyph(c, "timer", icons.timer, 12, p.Ink).Label(locales.TimingThisTask())
 				} else if iconButton(c, "play.fill", icons.play, playLabel, p).Disabled(item.Done).Clicked() {
 					a.pomodoro.StartTask(item, tier, 0)
 				}
-				if iconButton(c, "trash", icons.trash, "删除任务", p).Clicked() {
+				if iconButton(c, "trash", icons.trash, locales.DeleteTask(), p).Clicked() {
 					a.perform(a.store.Delete(item.ID, tier))
 				}
 			}
@@ -311,37 +314,37 @@ func (a *app) taskRow(c *ui.Context, p palette, item todo.Item, tier todo.Tier, 
 		a.beginEdit(c, item, tier)
 	}
 	row.ContextMenu(func(m *ui.Menu) {
-		if m.Item("编辑").Chosen() {
+		if m.Item(locales.MenuEdit()).Chosen() {
 			a.beginEdit(c, item, tier)
 		}
-		m.Submenu("开始专注", func(sub *ui.Menu) {
+		m.Submenu(locales.StartFocus(), func(sub *ui.Menu) {
 			for _, minutes := range focusPresets {
-				if sub.Item(fmt.Sprintf("%d 分钟", minutes)).Disabled(item.Done).Chosen() {
+				if sub.Item(locales.Minutes(minutes)).Disabled(item.Done).Chosen() {
 					a.pomodoro.StartTask(item, tier, minutes)
 				}
 			}
 		})
-		m.Submenu("象限", func(sub *ui.Menu) {
-			labels := []string{"重要且紧急 !1", "重要不紧急 !2", "紧急不重要 !3", "不重要不紧急 !4"}
+		m.Submenu(locales.MenuQuadrant(), func(sub *ui.Menu) {
+			labels := []string{locales.Quadrant1(), locales.Quadrant2(), locales.Quadrant3(), locales.Quadrant4()}
 			for i, label := range labels {
 				quadrant := todo.Quadrant(i + 1)
 				if sub.Item(label).Radio(item.Quadrant == quadrant).Chosen() {
 					a.perform(a.store.SetQuadrant(item.ID, quadrant, tier))
 				}
 			}
-			if sub.Item("清除标记").Chosen() {
+			if sub.Item(locales.ClearQuadrant()).Chosen() {
 				a.perform(a.store.SetQuadrant(item.ID, todo.QuadrantNone, tier))
 			}
 		})
-		m.Submenu("移动到", func(sub *ui.Menu) {
+		m.Submenu(locales.MenuMoveTo(), func(sub *ui.Menu) {
 			for _, target := range []todo.Tier{todo.Today, todo.ThreeDay, todo.Week} {
-				if target != tier && sub.Item(target.String()).Chosen() {
+				if target != tier && sub.Item(tierName(target)).Chosen() {
 					a.perform(a.store.Move(item.ID, tier, target))
 				}
 			}
 		})
 		m.Separator()
-		if m.Item("删除").Danger().Chosen() {
+		if m.Item(locales.MenuDelete()).Danger().Chosen() {
 			a.perform(a.store.Delete(item.ID, tier))
 		}
 	})
@@ -468,11 +471,11 @@ func (a *app) quickAddView(c *ui.Context, p palette, tasks []taskRef) {
 	// 22pt box, 7 more to the text).
 	ui.Row(c).Padding(10, 14, 10, 32).Gap(12).AlignItems(ui.Center).Background(paperColor(c, p)).Children(func() {
 		glyph(c, "plus", icons.plus, 12, p.Faint)
-		placeholder := "添加待办…"
+		placeholder := locales.QuickAddPlaceholder()
 		if a.activeTag != "" {
-			placeholder = "添加到 #" + a.activeTag + "…"
+			placeholder = locales.QuickAddTagPlaceholder(a.activeTag)
 		}
-		input := ui.TextInput(c.Key("quick-add"), &a.quickAdd).Grow(1).Bind(&a.quickAddHandle).Label("添加待办").Placeholder(placeholder).Background(paperColor(c, p)).Border(0, p.Paper).Radius(0).FontSize(13).Padding(6, 0)
+		input := ui.TextInput(c.Key("quick-add"), &a.quickAdd).Grow(1).Bind(&a.quickAddHandle).Label(locales.QuickAdd()).Placeholder(placeholder).Background(paperColor(c, p)).Border(0, p.Paper).Radius(0).FontSize(13).Padding(6, 0)
 		switch {
 		case input.Shortcut(0, ui.KeyUp) && len(tasks) > 0:
 			a.selectTask(c, tasks[len(tasks)-1]) // the list is above the field
@@ -485,7 +488,7 @@ func (a *app) quickAddView(c *ui.Context, p palette, tasks []taskRef) {
 		case input.Submitted():
 			a.submitQuickAdd(c, todo.Today)
 		}
-		if iconButton(c, "arrow.right", icons.arrow, "添加到今日", p).Disabled(strings.TrimSpace(a.quickAdd) == "").Clicked() {
+		if iconButton(c, "arrow.right", icons.arrow, locales.AddToToday(), p).Disabled(strings.TrimSpace(a.quickAdd) == "").Clicked() {
 			a.submitQuickAdd(c, todo.Today)
 		}
 	})
@@ -511,27 +514,27 @@ func (a *app) submitQuickAdd(c *ui.Context, tier todo.Tier) {
 func (a *app) toolbarView(c *ui.Context, p palette) {
 	rule(c, p, 1)
 	ui.Row(c).Padding(9, 14).Gap(8).AlignItems(ui.Center).Background(paperColor(c, p)).Children(func() {
-		open := textButton(c, "doc.text", icons.file, "todos.md", "打开文件", p)
+		open := textButton(c, "doc.text", icons.file, "todos.md", locales.OpenFile(), p)
 		if open.Clicked() {
 			a.openTodoFile()
 		}
 		open.ContextMenu(func(m *ui.Menu) {
-			if m.Item("在 Finder / 文件管理器中显示").Chosen() {
+			if m.Item(locales.ShowInFolder()).Chosen() {
 				mygo.Shell.ShowItemInFolder(a.store.Path())
 			}
-			if m.Item("拷贝路径").Chosen() {
+			if m.Item(locales.CopyPath()).Chosen() {
 				mygo.Clipboard.WriteText(a.store.Path())
 			}
 		})
 		ui.Spacer(c)
-		if iconButton(c, "slider.horizontal.3", icons.sliders, "设置", p).Clicked() {
+		if iconButton(c, "slider.horizontal.3", icons.sliders, locales.Settings(), p).Clicked() {
 			a.showSettings = !a.showSettings
 		}
-		if iconButton(c, "questionmark.circle", icons.help, "使用帮助", p).Clicked() {
+		if iconButton(c, "questionmark.circle", icons.help, locales.Help(), p).Clicked() {
 			a.showHelp = !a.showHelp
 			a.showSettings = false
 		}
-		if textButton(c, "power", icons.quit, "退出", "退出 Hibi", p).Clicked() {
+		if textButton(c, "power", icons.quit, locales.Quit(), locales.QuitHibi(), p).Clicked() {
 			mygo.App.Quit()
 		}
 	})
@@ -541,19 +544,11 @@ func (a *app) helpView(c *ui.Context, p palette) {
 	ui.Column(c).Padding(12).Gap(9).Background(paperColor(c, p)).Children(func() {
 		ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
 			glyph(c, "questionmark.circle", icons.help, 13, p.Muted)
-			ui.Text(c, "Hibi 使用说明").FontSize(11.5).FontWeight(600).TextColor(p.Ink)
+			ui.Text(c, locales.HelpTitle()).FontSize(11.5).FontWeight(600).TextColor(p.Ink)
 		})
 		for _, line := range []string{
-			"⌃⌥H 在任何应用里打开 Hibi；Esc 关闭",
-			"↩ 今日 · ⌥↩ 三日 · ⌘↩ 本周",
-			"↑↓ 选任务：空格完成 · ↩ 编辑 · F 计时 · 1~4 象限 · ⌘⌫ 删除",
-			"⌘↑↓ 把选中的任务移到上一档或下一档",
-			"正文 #标签 !1~!4；支持 ⏱40m 时长标记",
-			"双击编辑，回车保存，Esc 放弃；右键更多操作",
-			"点击标签筛选；筛选时新增任务自动带上该标签",
-			"自动开始专注、离开时结束本轮、久坐提醒，都可在设置里调整",
-			"悬停任务点播放按钮，把番茄钟记到该任务",
-			"所有修改实时写入 ~/todos.md，外部编辑自动重载",
+			locales.Help1(), locales.Help2(), locales.Help3(), locales.Help4(), locales.Help5(),
+			locales.Help6(), locales.Help7(), locales.Help8(), locales.Help9(), locales.Help10(),
 		} {
 			ui.Text(c, line).FontSize(11).TextColor(p.Muted)
 		}
@@ -565,70 +560,79 @@ func (a *app) helpView(c *ui.Context, p palette) {
 func (a *app) settingsView(c *ui.Context, p palette) {
 	ui.Column(c).Padding(12, 14, 14, 14).Gap(12).Background(paperColor(c, p)).Children(func() {
 		ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "设置").FontSize(13).FontWeight(600).TextColor(p.Ink)
+			ui.Text(c, locales.Settings()).FontSize(13).FontWeight(600).TextColor(p.Ink)
 			ui.Spacer(c)
-			if iconButton(c, "xmark", icons.close, "关闭设置", p).Clicked() {
+			if iconButton(c, "xmark", icons.close, locales.CloseSettings(), p).Clicked() {
 				a.showSettings = false
 			}
 		})
-		ui.Text(c, "自动感知").FontSize(10.5).FontWeight(600).TextColor(p.Muted)
+		ui.Text(c, locales.AutoSenseHeading()).FontSize(10.5).FontWeight(600).TextColor(p.Muted)
 		changed := false
-		settingRow(c, p, "在电脑前时自动开始专注",
-			fmt.Sprintf("启动时、离开后回来时、休息结束时，用上次选的时长开始。点停止后，在电脑前的时间仍算专注：%d 分钟后你还没离开，新一轮从停止时算起；离开再回来，新一轮从回来时开始。不想计时请用暂停。", breakMinutes),
+		settingRow(c, p, locales.AutoStartTitle(), locales.AutoStartNote(breakMinutes),
 			func() {
-				changed = ui.Switch(c, &a.autoSense.AutoStart).Label("在电脑前时自动开始专注").Changed() || changed
+				changed = ui.Switch(c, &a.autoSense.AutoStart).Label(locales.AutoStartTitle()).Changed() || changed
 			})
-		settingRow(c, p, "离开时结束本轮",
-			"离开算作休息，任务只记离开前的时间；正在等待的休息提示也会关闭。",
+		settingRow(c, p, locales.EndOnAwayTitle(), locales.EndOnAwayNote(),
 			func() {
-				changed = ui.Switch(c, &a.autoSense.EndOnAway).Label("离开时结束本轮").Changed() || changed
+				changed = ui.Switch(c, &a.autoSense.EndOnAway).Label(locales.EndOnAwayTitle()).Changed() || changed
 			})
 		watchingAway := a.autoSense.watchesAway()
 		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, "多久没有操作算离开（分钟）").FontSize(12).TextColor(p.Ink)
+			ui.Text(c, locales.AwayLabel()).FontSize(12).TextColor(p.Ink)
 			ui.Row(c).Children(func() { // the track only as wide as its segments
-				if ui.Segmented(c, &a.awayIndex, minuteLabels(awayPresets)...).Label("多久没有操作算离开（分钟）").Disabled(!watchingAway).Changed() {
+				if ui.Segmented(c, &a.awayIndex, minuteLabels(awayPresets)...).Label(locales.AwayLabel()).Disabled(!watchingAway).Changed() {
 					a.autoSense.AwayMinutes = awayPresets[a.awayIndex]
 					changed = true
 				}
 			})
-			note := "这么久没有键盘或鼠标输入，或电脑睡眠这么久，算作离开。只看视频或读文档不碰电脑，也会算作离开。"
+			note := locales.AwayNote()
 			if a.autoSense.ActivityAware {
-				note = "这么久没有键盘或鼠标输入，或电脑睡眠这么久，算作离开。播放视频或开会时不算；只读文档不碰电脑，会算作离开。"
+				note = locales.AwayNoteActivity()
 			}
 			if !watchingAway {
-				note = "上面两项都关闭时，用不到这一项。"
+				note = locales.AwayNoteUnused()
 			}
 			ui.Text(c, note).FontSize(11).TextColor(p.Muted)
 		})
 		rule(c, p, 1)
-		settingRow(c, p, "久坐提醒",
-			"连续坐够下面的时间，发一条通知提醒你起来走 3 分钟，倒计时不停。3 分钟没有操作就算起来过，重新计时。",
+		settingRow(c, p, locales.SitSettingTitle(), locales.SitSettingNote(),
 			func() {
-				changed = ui.Switch(c, &a.autoSense.SitReminder).Label("久坐提醒").Changed() || changed
+				changed = ui.Switch(c, &a.autoSense.SitReminder).Label(locales.SitSettingTitle()).Changed() || changed
 			})
 		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, "连续坐多久提醒（分钟）").FontSize(12).TextColor(p.Ink)
+			ui.Text(c, locales.SitLabel()).FontSize(12).TextColor(p.Ink)
 			ui.Row(c).Children(func() { // the track only as wide as its segments
-				if ui.Segmented(c, &a.sitIndex, minuteLabels(sitPresets)...).Label("连续坐多久提醒（分钟）").Disabled(!a.autoSense.SitReminder).Changed() {
+				if ui.Segmented(c, &a.sitIndex, minuteLabels(sitPresets)...).Label(locales.SitLabel()).Disabled(!a.autoSense.SitReminder).Changed() {
 					a.autoSense.SitMinutes = sitPresets[a.sitIndex]
 					changed = true
 				}
 			})
-			ui.Text(c, "研究里每 30 分钟起来走 5 分钟，血糖和血压都有改善；每 60 分钟一次，血糖没有改善。").FontSize(11).TextColor(p.Muted)
+			ui.Text(c, locales.SitStudy()).FontSize(11).TextColor(p.Muted)
 		})
 		rule(c, p, 1)
-		settingRow(c, p, "识别视频、会议和打字",
-			"播放视频或开会时，不碰电脑也不算离开或起来过。专注结束时你在打字，等你停下再提醒（最多 3 分钟）；在开会，等会议结束（最多 1 小时）。只读系统状态，不截屏，不读内容。",
+		settingRow(c, p, locales.ActivityTitle(), locales.ActivityNote(),
 			func() {
-				changed = ui.Switch(c, &a.autoSense.ActivityAware).Label("识别视频、会议和打字").Changed() || changed
+				changed = ui.Switch(c, &a.autoSense.ActivityAware).Label(locales.ActivityTitle()).Changed() || changed
 			})
 		if !a.autoSense.watches() && !a.autoSense.ActivityAware {
-			ui.Text(c, "全部关闭时，Hibi 不读取键盘和鼠标的空闲时间。").FontSize(11).TextColor(p.Muted)
+			ui.Text(c, locales.AllOffNote()).FontSize(11).TextColor(p.Muted)
 		}
 		if changed {
 			a.setAutoSense(a.autoSense)
 		}
+		rule(c, p, 1)
+		ui.Text(c, locales.LanguageHeading()).FontSize(10.5).FontWeight(600).TextColor(p.Muted)
+		langs := mygo.App.Languages()
+		names := make([]string, len(langs))
+		for i, tag := range langs {
+			names[i] = i18n.Autonym(tag)
+		}
+		shown := slices.Index(langs, c.Locale())
+		ui.Row(c).Children(func() {
+			if ui.Segmented(c, &shown, names...).Label(locales.LanguageHeading()).Changed() {
+				mygo.App.SetLocale(langs[shown]) // kept for the next launches
+			}
+		})
 	})
 }
 
@@ -677,7 +681,7 @@ func (a *app) finishEdit(c *ui.Context, save bool) {
 		if err != nil {
 			a.perform(err)
 		} else if !changed {
-			a.setStatus("任务正文不能为空，已保留原内容")
+			a.setStatus(locales.StatusEmptyTextKept())
 		}
 	}
 	if a.reloadPending.Swap(false) {
@@ -691,25 +695,70 @@ func (a *app) finishEdit(c *ui.Context, save bool) {
 func (a *app) breakPromptView(c *ui.Context) {
 	p := applyPalette(c)
 	timer := a.pomodoro.Snapshot()
+	streak := timer.StreakSeconds / 60
 	ui.Column(c).Fill().Background(p.Paper).Children(func() {
 		ui.Column(c).Padding(16).Center().Gap(9).Background(p.Paper).Children(func() {
 			glyph(c, "", icons.cat, 26, p.Muted)
-			ui.Text(c, "专注结束").FontSize(16).FontWeight(600).TextColor(p.Ink)
+			ui.Text(c, locales.PromptTitle()).FontSize(16).FontWeight(600).TextColor(p.Ink)
 		})
 		rule(c, p, 1)
-		ui.Column(c).Fill().Center().Padding(20).Gap(15).Children(func() {
-			ui.Text(c, fmt.Sprintf("%d 分钟，完成。", timer.SessionFocusMinutes)).Font("Menlo").FontSize(14).TextColor(p.Ink)
-			ui.Text(c, fmt.Sprintf("起身活动一下，休息 %d 分钟", breakMinutes)).FontSize(12).TextColor(p.Muted)
+		ui.Column(c).Fill().Center().Padding(16, 20).Gap(12).Children(func() {
+			ui.Column(c).Center().Gap(5).Children(func() {
+				ui.Text(c, locales.PromptDone(timer.SessionFocusMinutes)).Font("Menlo").FontSize(14).TextColor(p.Ink)
+				// A break skipped since the last rest: say how long it has been.
+				if streak > timer.SessionFocusMinutes {
+					ui.Text(c, locales.PromptStreak(streak)).FontSize(12).FontWeight(600).TextColor(p.Ink).TextAlign(ui.Center)
+				}
+			})
+			ui.Column(c).Center().Gap(3).Children(func() {
+				ui.Text(c, breakTip(max(streak, timer.SessionFocusMinutes))).FontSize(12).TextColor(p.Ink).TextAlign(ui.Center)
+				ui.Text(c, locales.PromptRest(breakMinutes)).FontSize(11).TextColor(p.Muted)
+			})
 			ui.Row(c).Gap(12).Children(func() {
-				if textButton(c, "arrow.right", icons.arrow, "跳过", "跳过休息", p).Clicked() {
+				if textButton(c, "arrow.right", icons.arrow, locales.Skip(), locales.SkipBreak(), p).Clicked() {
 					a.pomodoro.Skip()
 				}
-				if textButton(c, "", icons.catAsleep, "开始休息", "开始休息", p).Clicked() {
+				if textButton(c, "", icons.catAsleep, locales.StartBreak(), locales.StartBreak(), p).Clicked() {
 					a.pomodoro.StartBreak()
 				}
 			})
 		})
 	})
+}
+
+// breakTip suggests what to do in the break after minutes of focus in a
+// row: the longer the user sat, the more the body needs.
+func breakTip(minutes int) string {
+	switch {
+	case minutes < 45:
+		return locales.TipShort()
+	case minutes < 90:
+		return locales.TipMedium()
+	case minutes < 150:
+		return locales.TipLong()
+	}
+	return locales.TipVeryLong()
+}
+
+// tierName is a tier's name as the panel shows it.
+func tierName(t todo.Tier) string {
+	switch t {
+	case todo.ThreeDay:
+		return locales.TierThreeDay()
+	case todo.Week:
+		return locales.TierWeek()
+	}
+	return locales.TierToday()
+}
+
+// headerDate is today's date in the header, as "Fri, Nov 27" or
+// "11月27日周五", in locale.
+func headerDate(locale, date string) string {
+	day, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	if err != nil {
+		return date
+	}
+	return i18n.FormatDate(locale, day, i18n.DateOptions{Skeleton: "MMMEd"})
 }
 
 func truncateRunes(text string, limit int) string {

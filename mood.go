@@ -1,9 +1,9 @@
 package main
 
 import (
-	"fmt"
-	"strings"
 	"time"
+
+	"github.com/UncertaintyDeterminesYou4ndMe/hibi/locales"
 )
 
 // catMood is how the menu bar cat looks. It tires as the user sits without
@@ -18,8 +18,16 @@ const (
 	moodAsleep
 )
 
-// moodNames name the tired moods in the menu bar tooltip.
-var moodNames = map[catMood]string{moodTired: "有点累了", moodWeary: "很累了", moodExhausted: "累坏了"}
+// moodName names a tired mood in the menu bar tooltip.
+func moodName(m catMood) string {
+	switch m {
+	case moodTired:
+		return locales.MoodTired()
+	case moodWeary:
+		return locales.MoodWeary()
+	}
+	return locales.MoodExhausted()
+}
 
 // dayTiredAfter is the day's focus at which the cat looks tired, weary and
 // exhausted.
@@ -38,7 +46,7 @@ type sitting struct {
 // up rests it. The sitting counts only while the sitting reminder is on.
 func catMoodFor(phase pomodoroPhase, todayFocus time.Duration, sat sitting) (catMood, string) {
 	if phase == phaseBreak {
-		return moodAsleep, "休息中"
+		return moodAsleep, locales.MoodAsleep()
 	}
 	day := 0
 	for day < len(dayTiredAfter) && todayFocus >= dayTiredAfter[day] {
@@ -54,10 +62,14 @@ func catMoodFor(phase pomodoroPhase, todayFocus time.Duration, sat sitting) (cat
 	}
 	var why []string
 	if day == int(mood) {
-		why = append(why, fmt.Sprintf("今天已经专注 %d 小时", int(dayTiredAfter[day-1].Hours())))
+		why = append(why, locales.MoodWhyDay(int(dayTiredAfter[day-1].Hours())))
 	}
 	if sit == int(mood) {
-		why = append(why, fmt.Sprintf("已经连续坐了 %d 分钟", int((time.Duration(sat.periods)*sat.sitEvery).Minutes())))
+		why = append(why, locales.MoodWhySat(int((time.Duration(sat.periods) * sat.sitEvery).Minutes())))
 	}
-	return mood, moodNames[mood] + "：" + strings.Join(why, "，")
+	reason := why[0]
+	if len(why) == 2 {
+		reason = locales.MoodWhyBoth(why[0], why[1])
+	}
+	return mood, locales.MoodTooltip(moodName(mood), reason)
 }

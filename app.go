@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/UncertaintyDeterminesYou4ndMe/hibi/internal/todo"
+	"github.com/UncertaintyDeterminesYou4ndMe/hibi/locales"
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 )
@@ -112,7 +113,7 @@ func newApp(store *todo.Store) *app {
 func (a *app) ready() {
 	tray, err := mygo.NewTray(mygo.TrayOptions{
 		ID: "hibi", Icon: trayIconPNG, IconIsTemplate: true,
-		ToolTip: "Hibi — 点击打开待办",
+		ToolTip: locales.TrayTooltip(),
 	})
 	if err != nil {
 		log.Fatal("tray: ", err)
@@ -123,27 +124,39 @@ func (a *app) ready() {
 	a.store.SetOnChange(a.TimerChanged)
 	a.TimerChanged()
 
-	menu := mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "打开 Hibi", Click: func(*mygo.MenuItem, *mygo.Window) { a.togglePanel() }},
-		{Label: "打开 todos.md", Click: func(*mygo.MenuItem, *mygo.Window) { a.openTodoFile() }},
-		mygo.Separator(),
-		{Role: mygo.RoleQuit},
-	})
 	if runtime.GOOS == "linux" {
-		tray.SetMenu(menu)
+		tray.SetMenu(a.trayMenu())
 	} else {
 		tray.OnClick(a.togglePanel)
 		tray.OnRightClick(func() {
 			a.closePanel()
-			tray.SetMenu(menu)
+			tray.SetMenu(a.trayMenu())
 			defer tray.SetMenu(nil)
 			tray.PopUpMenu()
 		})
 	}
+	// The panel and the prompt say their texts anew each frame; the menu
+	// bar and the Linux menu were set once.
+	mygo.App.OnLocaleChanged(func(string) {
+		if runtime.GOOS == "linux" {
+			tray.SetMenu(a.trayMenu())
+		}
+		a.TimerChanged() // the title and tooltip it last set differ now
+	})
 	a.startWatching()
 	a.startPresence()
 	a.registerHotkey()
 	a.deskAPIStop = a.startDeskAPI()
+}
+
+// trayMenu is the menu of the menu bar icon, in the app's language.
+func (a *app) trayMenu() *mygo.Menu {
+	return mygo.NewMenu([]*mygo.MenuItem{
+		{Label: locales.MenuOpenHibi(), Click: func(*mygo.MenuItem, *mygo.Window) { a.togglePanel() }},
+		{Label: locales.MenuOpenTodos(), Click: func(*mygo.MenuItem, *mygo.Window) { a.openTodoFile() }},
+		mygo.Separator(),
+		{Role: mygo.RoleQuit},
+	})
 }
 
 func (a *app) registerHotkey() {
@@ -155,7 +168,7 @@ func (a *app) registerHotkey() {
 		return
 	}
 	if err := mygo.GlobalShortcut.Register(hotkey, a.togglePanel); err != nil {
-		a.setStatus("快捷键 " + hotkey + " 不可用: " + err.Error())
+		a.setStatus(locales.StatusHotkeyUnavailable(hotkey, err.Error()))
 	}
 }
 
@@ -217,7 +230,7 @@ func (a *app) setAutoSense(s autoSense) {
 		SitReminder: &s.SitReminder, SitMinutes: s.SitMinutes, ActivityAware: &s.ActivityAware,
 	}
 	if err := savePreferences(prefs); err != nil {
-		a.setStatus("设置没有保存: " + err.Error())
+		a.setStatus(locales.StatusSettingsNotSaved(err.Error()))
 	}
 }
 
@@ -255,11 +268,11 @@ func (a *app) showSitReminder(sat time.Duration) {
 		away = time.Duration(a.presence.threshold.Load())
 	}
 	a.presenceMu.Unlock()
-	body := "起来走 3 分钟。"
+	body := locales.SitNotifyBody()
 	if a.pomodoro.Snapshot().Phase == phaseFocus && away > sitBreak {
-		body = "起来走 3 分钟，这一轮专注会继续计时。"
+		body = locales.SitNotifyBodyFocus()
 	}
-	title := fmt.Sprintf("已经坐了 %d 分钟", int(sat/time.Minute))
+	title := locales.SitNotifyTitle(int(sat / time.Minute))
 	go func() {
 		n := mygo.NewNotification(mygo.NotificationOptions{ID: "hibi-sit", Title: title, Body: body, Group: "hibi-sit"})
 		if err := n.Show(); err != nil {
@@ -472,6 +485,9 @@ func (a *app) refreshTray() {
 	sat, _ := a.sitting.Load().(sitting)
 	today := time.Duration(a.todayFocusSeconds(timer)) * time.Second
 	mood, tip := catMoodFor(timer.Phase, today, sat)
+	if tip == "" {
+		tip = locales.TrayTooltip()
+	}
 	if catMood(a.trayMood.Swap(int32(mood))) != mood {
 		if err := tray.SetIcon(trayIcon(mood), true); err != nil {
 			log.Print("tray icon: ", err)
@@ -498,11 +514,11 @@ func trayTitle(s pomodoroSnapshot, openToday int) string {
 	case phaseFocus:
 		return ""
 	case phasePaused:
-		return "暂停"
+		return locales.TrayPaused()
 	case phaseBreak:
-		return "休息"
+		return locales.TrayBreak()
 	case phaseBreakPending:
-		return "该休息了"
+		return locales.BreakDue()
 	}
 	if openToday > 0 {
 		return strconv.Itoa(openToday)
@@ -520,7 +536,7 @@ func (a *app) startWatching() {
 	a.watchCancel = cancel
 	watcher, err := mygo.WatchFiles(ctx, a.store.Path(), mygo.FileWatchOptions{Debounce: 80 * time.Millisecond})
 	if err != nil {
-		a.setStatus("文件监听不可用: " + err.Error())
+		a.setStatus(locales.StatusWatchUnavailable(err.Error()))
 		return
 	}
 	go func() {
@@ -543,7 +559,7 @@ func (a *app) reloadFromDisk() {
 		return
 	}
 	if err := a.store.Reload(); err != nil {
-		a.setStatus("读取 todos.md 失败: " + err.Error())
+		a.setStatus(locales.StatusReadFailed(err.Error()))
 	}
 }
 
@@ -564,7 +580,9 @@ func (a *app) statusText() string {
 }
 
 func (a *app) perform(err error) {
-	if err != nil {
+	if errors.Is(err, todo.ErrEmptyText) {
+		a.setStatus(locales.ErrEmptyText())
+	} else if err != nil {
 		a.setStatus(err.Error())
 	} else {
 		a.setStatus("")
@@ -574,7 +592,7 @@ func (a *app) perform(err error) {
 func (a *app) openTodoFile() {
 	go func() {
 		if err := mygo.Shell.OpenPath(a.store.Path()); err != nil {
-			a.setStatus("打开文件失败: " + err.Error())
+			a.setStatus(locales.StatusOpenFailed(err.Error()))
 		}
 	}()
 }
@@ -595,7 +613,7 @@ func (a *app) ShowBreakPrompt(focusMinutes, restMinutes int) {
 	// Closing the panel may have hidden Hibi; a hidden app shows no window.
 	mygo.App.Show()
 	prompt := mygo.NewWindow(mygo.WindowOptions{
-		Title: "专注结束", Width: 320, Height: 220,
+		Title: locales.PromptTitle(), Width: 320, Height: 260,
 		DisableResize: true, DisableMinimize: true, DisableMaximize: true,
 		DisableFullScreen: true, AlwaysOnTop: true, SkipTaskbar: true, Panel: true, Frameless: true,
 		BackgroundColor: "light-dark(#f5f5f3, #111113)",

@@ -1,0 +1,263 @@
+{
+  "@@locale": "en",
+  "trayTooltip": "Hibi — click to open your todos",
+  "menuOpenHibi": "Open Hibi",
+  "menuOpenTodos": "Open todos.md",
+  "trayPaused": "Paused",
+  "trayBreak": "Break",
+  "breakDue": "Break time",
+  "statusHotkeyUnavailable": "Shortcut {hotkey} is unavailable: {error}",
+  "@statusHotkeyUnavailable": {
+    "placeholders": {
+      "hotkey": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "statusSettingsNotSaved": "Settings were not saved: {error}",
+  "@statusSettingsNotSaved": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "statusWatchUnavailable": "File watching is unavailable: {error}",
+  "@statusWatchUnavailable": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "statusReadFailed": "Could not read todos.md: {error}",
+  "@statusReadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "statusOpenFailed": "Could not open the file: {error}",
+  "@statusOpenFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "statusDeskApiShortToken": "The desk device API did not start: the token needs at least 16 characters",
+  "statusDeskApiFailed": "The desk device API did not start: {error}",
+  "@statusDeskApiFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "statusEmptyTextKept": "The task text cannot be empty; the old text is kept",
+  "errEmptyText": "The task text cannot be empty",
+  "sitNotifyTitle": "{minutes, plural, one {Sitting for # minute} other {Sitting for # minutes}}",
+  "@sitNotifyTitle": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "sitNotifyBody": "Get up and walk for 3 minutes.",
+  "sitNotifyBodyFocus": "Get up and walk for 3 minutes. This focus session keeps counting.",
+  "breakEndTitle": "Break over",
+  "breakEndBody": "You can start the next focus session",
+  "breakEndBodyAuto": "The next focus session starts by itself when you are at the computer",
+  "moodTired": "A bit tired",
+  "moodWeary": "Very tired",
+  "moodExhausted": "Worn out",
+  "moodAsleep": "On a break",
+  "moodWhyDay": "{hours, plural, one {# hour of focus today} other {# hours of focus today}}",
+  "@moodWhyDay": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "moodWhySat": "{minutes, plural, one {sitting for # minute} other {sitting for # minutes}}",
+  "@moodWhySat": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "moodWhyBoth": "{first}, {second}",
+  "@moodWhyBoth": {
+    "placeholders": {
+      "first": {
+        "type": "String"
+      },
+      "second": {
+        "type": "String"
+      }
+    }
+  },
+  "moodTooltip": "{mood}: {why}",
+  "@moodTooltip": {
+    "placeholders": {
+      "mood": {
+        "type": "String"
+      },
+      "why": {
+        "type": "String"
+      }
+    }
+  },
+  "tierToday": "Today",
+  "tierThreeDay": "3-Day",
+  "tierWeek": "Week",
+  "focusTotal": "Focus",
+  "focusTotalTip": "Today's total focus time, sessions without a task included",
+  "clearTagFilter": "Clear tag filter #{tag}",
+  "@clearTagFilter": {
+    "placeholders": {
+      "tag": {
+        "type": "String"
+      }
+    }
+  },
+  "startFocus": "Start focus",
+  "chooseFocusLength": "Choose the focus length",
+  "minutes": "{minutes, plural, one {# minute} other {# minutes}}",
+  "@minutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "pause": "Pause",
+  "resume": "Resume",
+  "stopAndRecord": "Stop and record",
+  "start": "Start",
+  "startBreak": "Start break",
+  "skip": "Skip",
+  "skipBreak": "Skip break",
+  "emptyToday": "No todos today",
+  "emptyFilter": "No matching tasks",
+  "toggleTask": "Toggle {task}",
+  "@toggleTask": {
+    "placeholders": {
+      "task": {
+        "type": "String"
+      }
+    }
+  },
+  "toggleTaskTip": "Done / not done",
+  "editTask": "Edit task",
+  "filterTag": "Filter #{tag}",
+  "@filterTag": {
+    "placeholders": {
+      "tag": {
+        "type": "String"
+      }
+    }
+  },
+  "timeThisTask": "Time this task instead; the countdown goes on",
+  "timingThisTask": "Timing this task",
+  "deleteTask": "Delete task",
+  "menuEdit": "Edit",
+  "menuQuadrant": "Quadrant",
+  "quadrant1": "Important and urgent !1",
+  "quadrant2": "Important, not urgent !2",
+  "quadrant3": "Urgent, not important !3",
+  "quadrant4": "Neither !4",
+  "clearQuadrant": "Clear mark",
+  "menuMoveTo": "Move to",
+  "menuDelete": "Delete",
+  "quickAdd": "Add a todo",
+  "quickAddPlaceholder": "Add a todo…",
+  "quickAddTagPlaceholder": "Add to #{tag}…",
+  "@quickAddTagPlaceholder": {
+    "placeholders": {
+      "tag": {
+        "type": "String"
+      }
+    }
+  },
+  "addToToday": "Add to Today",
+  "openFile": "Open the file",
+  "showInFolder": "Show in Finder / file manager",
+  "copyPath": "Copy path",
+  "settings": "Settings",
+  "help": "Help",
+  "quit": "Quit",
+  "quitHibi": "Quit Hibi",
+  "helpTitle": "Using Hibi",
+  "help1": "⌃⌥H opens Hibi from any app; Esc closes it",
+  "help2": "↩ Today · ⌥↩ 3-Day · ⌘↩ Week",
+  "help3": "↑↓ select a task: Space done · ↩ edit · F time · 1~4 quadrant · ⌘⌫ delete",
+  "help4": "⌘↑↓ moves the selected task to the tier above or below",
+  "help5": "Text #tag !1~!4; a ⏱40m mark records time",
+  "help6": "Double-click to edit, Enter saves, Esc discards; right-click for more",
+  "help7": "Click a tag to filter; tasks added while filtering get that tag",
+  "help8": "Auto-start, ending the session when you leave and the sitting reminder can all be changed in the settings",
+  "help9": "Hover a task and click play to time it",
+  "help10": "Every change is written to ~/todos.md at once; edits from elsewhere reload by themselves",
+  "closeSettings": "Close settings",
+  "autoSenseHeading": "Auto sensing",
+  "autoStartTitle": "Start focus by itself at the computer",
+  "autoStartNote": "Starts with the length you picked last: at launch, when you come back after leaving, and when a break ends. After you press Stop, time at the computer still counts as focus: if you have not left {minutes} minutes later, a session starts that began at the stop; if you leave and come back, it starts when you are back. To not be timed, pause instead.",
+  "@autoStartNote": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "endOnAwayTitle": "End the session when you leave",
+  "endOnAwayNote": "Leaving counts as the break, and the task gets only the time before you left. A waiting break prompt closes too.",
+  "awayLabel": "Minutes without input that count as leaving",
+  "awayNote": "This long without keyboard or mouse input, or asleep this long, counts as leaving. Watching a video or reading without touching the computer also counts as leaving.",
+  "awayNoteActivity": "This long without keyboard or mouse input, or asleep this long, counts as leaving. A playing video or a call does not; reading without touching the computer does.",
+  "awayNoteUnused": "Not used while both settings above are off.",
+  "sitSettingTitle": "Sitting reminder",
+  "sitSettingNote": "After you sit for the time below, a notification asks you to get up and walk for 3 minutes; the countdown goes on. 3 minutes without input counts as having got up and starts the time over.",
+  "sitLabel": "Remind after sitting (minutes)",
+  "sitStudy": "In a study, a 5-minute walk every 30 minutes lowered both blood sugar and blood pressure; a walk every 60 minutes did not lower blood sugar.",
+  "activityTitle": "Notice videos, calls and typing",
+  "activityNote": "While a video plays or a call goes on, not touching the computer does not count as leaving or getting up. If you type when focus ends, the reminder waits for you to stop (3 minutes at most); in a call, for the call to end (1 hour at most). Hibi reads only system state: no screenshots, no content.",
+  "allOffNote": "With all of these off, Hibi does not read the keyboard and mouse idle time.",
+  "languageHeading": "Language",
+  "promptTitle": "Focus done",
+  "promptDone": "{minutes, plural, one {# minute, done.} other {# minutes, done.}}",
+  "@promptDone": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "promptStreak": "{minutes} minutes of focus in a row, with no break",
+  "@promptStreak": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "promptRest": "Rest for {minutes} minutes",
+  "@promptRest": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "tipShort": "Use the restroom, get some water, walk around.",
+  "tipMedium": "Walk around, loosen your neck, shoulders and wrists, and look at something far away.",
+  "tipLong": "Climb a few flights of stairs, or do 10 squats.",
+  "tipVeryLong": "Too long without a break, so do not skip this one: climb a few flights of stairs, then do a set of push-ups."
+}

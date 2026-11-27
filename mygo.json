@@ -9,5 +9,9 @@
     "infoPlist": {
       "LSUIElement": true
     }
+  },
+  "i18n": {
+    "dir": "locales",
+    "source": "en"
   }
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/UncertaintyDeterminesYou4ndMe/hibi/internal/todo"
+	"github.com/UncertaintyDeterminesYou4ndMe/hibi/locales"
 )
 
 type pomodoroPhase int
@@ -38,6 +39,9 @@ type pomodoroSnapshot struct {
 	// SessionElapsedSeconds is the counted time of the focus session that
 	// runs or is paused, not yet in the focus log.
 	SessionElapsedSeconds int
+	// StreakSeconds is the focus of the sessions that ended since the
+	// user last rested (Pomodoro.streak).
+	StreakSeconds int
 }
 
 func (s pomodoroSnapshot) TimeString() string {
@@ -111,6 +115,11 @@ type Pomodoro struct {
 	// back at the stop.
 	stopRest  bool
 	stoppedAt time.Duration
+	// streak is the counted focus seconds of the sessions that ended since
+	// the user last rested: a break that ran to its end or lasted sitBreak,
+	// or leaving the computer. Skipping a break keeps it, so the focus end
+	// prompt can say how long the user has gone without one.
+	streak int
 	// autoStart and endOnAway are the settings for UserPresent and UserAway
 	// (autoSense).
 	autoStart bool
@@ -186,7 +195,7 @@ func (p *Pomodoro) Snapshot() pomodoroSnapshot {
 		SelectedFocusMinutes: p.selectedFocusMinutes,
 		SessionFocusMinutes:  p.sessionFocusMinutes,
 		BoundTaskID:          p.boundTaskID, BoundTaskTier: p.boundTaskTier,
-		BoundTaskText: p.boundTaskText,
+		BoundTaskText: p.boundTaskText, StreakSeconds: p.streak,
 	}
 	if p.phase == phaseFocus || p.phase == phasePaused {
 		s.SessionElapsedSeconds = p.sessionFocusMinutes*60 - remaining
@@ -254,6 +263,7 @@ func (p *Pomodoro) begin(task *boundTask, minutes int) {
 // when minutes <= 0. It settles the session it replaces.
 func (p *Pomodoro) beginLocked(task *boundTask, minutes int) settlement {
 	settle := p.settleLocked(false, 0)
+	p.streak += settle.focusSeconds
 	p.stopTimerLocked()
 	p.stopReminderLocked()
 	if minutes <= 0 {
@@ -322,7 +332,9 @@ func (p *Pomodoro) UserPresent() {
 		full := time.Duration(p.sessionFocusMinutes) * time.Minute
 		left := max(full-since, time.Minute)
 		p.runLocked(left)
-		settle.focusSeconds += int((since - (full - left)) / time.Second)
+		worked := int((since - (full - left)) / time.Second)
+		settle.focusSeconds += worked
+		p.streak += worked
 	}
 	p.mu.Unlock()
 	p.afterBegin(settle, 0)
@@ -335,6 +347,7 @@ func (p *Pomodoro) UserPresent() {
 // With endOnAway off, leaving only arms that start.
 func (p *Pomodoro) UserAway(idleFor time.Duration) {
 	p.mu.Lock()
+	p.streak = 0 // leaving is a rest
 	if p.stopRest {
 		// Left after a stop: nothing runs, and the time between the stop
 		// and leaving was worked.
@@ -403,6 +416,7 @@ func (p *Pomodoro) Stop() {
 		p.stoppedAt = p.clock()
 	}
 	settle := p.settleLocked(false, 0)
+	p.streak += settle.focusSeconds
 	p.endLocked()
 	p.autoArmed, p.stopRest = false, p.autoStart
 	p.mu.Unlock()
@@ -443,11 +457,15 @@ func (p *Pomodoro) StartBreak() {
 
 // Skip skips the break (waiting or running) and goes straight into the next
 // focus session with the selected length: the user is still at the computer.
+// A break skipped after sitBreak still counts as a rest.
 func (p *Pomodoro) Skip() {
 	p.mu.Lock()
 	if p.phase != phaseBreak && p.phase != phaseBreakPending {
 		p.mu.Unlock()
 		return
+	}
+	if p.phase == phaseBreak && breakMinutes*time.Minute-p.leftLocked() >= sitBreak {
+		p.streak = 0 // long enough to have got up
 	}
 	settle := p.beginLocked(nil, 0)
 	p.mu.Unlock()
@@ -537,6 +555,7 @@ func (p *Pomodoro) wake(generation uint64) {
 	switch p.phase {
 	case phaseFocus:
 		settle := p.settleLocked(true, 0)
+		p.streak += settle.focusSeconds
 		p.clearBindingLocked()
 		p.stopTimerLocked()
 		p.phase = phaseBreakPending
@@ -558,17 +577,18 @@ func (p *Pomodoro) wake(generation uint64) {
 		}
 	case phaseBreak:
 		p.stopTimerLocked()
+		p.streak = 0
 		p.phase = phaseIdle
 		p.clearBindingLocked()
 		p.autoArmed = true
 		autoStart := p.autoStart
 		p.mu.Unlock()
 		if p.host != nil {
-			body := "可以开始下一轮专注"
+			body := locales.BreakEndBody()
 			if autoStart {
-				body = "你在电脑前时，下一轮专注会自动开始"
+				body = locales.BreakEndBodyAuto()
 			}
-			p.host.Notify("休息结束", body)
+			p.host.Notify(locales.BreakEndTitle(), body)
 			p.host.Chime()
 		}
 		p.changed()

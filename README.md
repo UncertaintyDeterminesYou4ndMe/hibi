@@ -12,6 +12,7 @@ The app is written in **Go** with [MyGo](https://github.com/egoist/mygo) native 
 - Eisenhower quadrant markers (`!1`–`!4`) for prioritizing tasks by importance/urgency
 - Task-bound Pomodoro timer with a selectable focus length (5/15/30/40/50/60 min, remembers your last pick) and a 10 min break, with automatic per-task time tracking
 - Focus-end reminder: a centered, always-on-top prompt that stays until you answer it; the break countdown only starts when you click Start Break, and the chime repeats every minute (up to 10 times) while it waits. Break-end reminder: a system notification + chime
+- The focus-end prompt suggests what to do in the break, by how long you have focused without a rest: under 45 minutes, use the restroom, get water and walk around; under 90, also loosen your neck, shoulders and wrists; under 150, climb stairs or do squats; longer, climb stairs and do push-ups. When you skipped a break since you last rested, it also says how long you have focused in a row. A rest is a break that ran to its end, a break skipped after 3 minutes, or leaving the computer
 - Automatic timing that follows you at the computer, so you never have to remember to start it. Each part can be turned off, and the away time changed, in the panel's settings (the sliders button in the toolbar):
   - When you are at the computer and nothing is being timed, a focus session starts by itself (your last-picked length, no task). This happens at launch, when you come back after leaving, and when a break ends.
   - Leaving the computer — 5 minutes (3, 10, 15 or 30 in the settings) without keyboard or mouse input, or the Mac asleep that long — ends the session and counts as your break. The task is credited for the time before you left, and a waiting break prompt closes.
@@ -27,6 +28,7 @@ The app is written in **Go** with [MyGo](https://github.com/egoist/mygo) native 
 - The task list works from the keyboard (see below)
 - Tags (`#tag`) with click-to-filter
 - Edit any task in place — double-click a row and rewrite it with the same `text #tag !n` grammar the quick-add field accepts
+- English and Simplified Chinese: Hibi follows the system's languages, and the settings switch it (kept for the next launches). The messages are in `locales/` (`en.json` is the source, `zh-Hans.json` the translation); `go tool mygo generate` writes `locales/catalog_gen.go` from them
 - Everything stored in a plain Markdown file (`~/todos.md`) — open it in any editor, sync it with any tool, edit it by hand
 - Automatic date rollover: completed tasks are archived, unfinished tasks carry forward
 - MyGo native UI, with a standard-library-only task/Markdown core and platform integration for tray, windows, notifications, file watching and shell actions

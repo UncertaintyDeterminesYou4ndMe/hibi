@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"image/png"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -10,6 +11,13 @@ import (
 
 	"github.com/UncertaintyDeterminesYou4ndMe/hibi/internal/todo"
 )
+
+// The tests read the panel and the notices in Chinese, the language Hibi
+// was first written in.
+func TestMain(m *testing.M) {
+	os.Setenv("MYGO_LOCALE", "zh-Hans")
+	os.Exit(m.Run())
+}
 
 type fakeTimerHost struct {
 	mu             sync.Mutex
@@ -439,6 +447,55 @@ func TestBreakEndAndSkipLeadIntoTheNextFocus(t *testing.T) {
 	p.Skip()
 	if got := p.Snapshot(); got.Phase != phaseFocus || got.RemainingSeconds != 5*60 {
 		t.Fatalf("skip during the break=%#v", got)
+	}
+}
+
+func TestStreakCountsFocusUntilTheUserRests(t *testing.T) {
+	host := &fakeTimerHost{}
+	p := NewPomodoro(nil, host, 30)
+	defer p.Stop()
+	streak := func() int { return p.Snapshot().StreakSeconds / 60 }
+
+	p.Start(30)
+	finishCountdown(p)
+	if got := streak(); got != 30 {
+		t.Fatalf("first prompt streak=%d", got)
+	}
+	p.Skip()
+	finishCountdown(p)
+	if got := streak(); got != 60 {
+		t.Fatalf("streak after a skipped break=%d", got)
+	}
+	// A break skipped before sitBreak is no rest.
+	p.StartBreak()
+	setRemaining(p, breakMinutes*60-60)
+	p.Skip()
+	finishCountdown(p)
+	if got := streak(); got != 90 {
+		t.Fatalf("streak after a one-minute break=%d", got)
+	}
+	// One skipped after sitBreak is.
+	p.StartBreak()
+	setRemaining(p, breakMinutes*60-int(sitBreak/time.Second))
+	p.Skip()
+	finishCountdown(p)
+	if got := streak(); got != 30 {
+		t.Fatalf("streak after a three-minute break=%d", got)
+	}
+	// So is a break that runs to its end, and leaving the computer.
+	p.StartBreak()
+	finishCountdown(p)
+	if got := streak(); got != 0 {
+		t.Fatalf("streak after a full break=%d", got)
+	}
+	p.Start(30)
+	finishCountdown(p)
+	p.Skip()
+	p.UserAway(defaultAwayThreshold)
+	p.UserPresent()
+	finishCountdown(p)
+	if got := streak(); got != 30 {
+		t.Fatalf("streak after leaving=%d", got)
 	}
 }
 

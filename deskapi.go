@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/UncertaintyDeterminesYou4ndMe/hibi/internal/todo"
+	"github.com/UncertaintyDeterminesYou4ndMe/hibi/locales"
 )
 
 // The desk API lets a desk device (the ESP-Mosaico board) show today's tasks
@@ -292,7 +293,7 @@ func (a *app) startDeskAPI() func() {
 		return func() {}
 	}
 	if len(prefs.Token) < 16 {
-		a.setStatus("桌面设备接口未启动：token 至少 16 个字符")
+		a.setStatus(locales.StatusDeskApiShortToken())
 		return func() {}
 	}
 	api := &deskAPI{
@@ -305,7 +306,7 @@ func (a *app) startDeskAPI() func() {
 	}
 	listener, err := net.Listen("tcp", prefs.Listen)
 	if err != nil {
-		a.setStatus("桌面设备接口未启动: " + err.Error())
+		a.setStatus(locales.StatusDeskApiFailed(err.Error()))
 		return func() {}
 	}
 	server := &http.Server{
