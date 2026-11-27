@@ -51,6 +51,24 @@ func TestPanelFooterStaysVisibleAtMaxHeight(t *testing.T) {
 	}
 }
 
+func TestSettingsScrollWithinThePanel(t *testing.T) {
+	a, tt := newPanelTestApp(t)
+	a.autoSense = defaultAutoSense()
+	a.showSettings = true
+	tt.SetSize(panelWidth, 680)
+	inside := func(label string) bool {
+		r, ok := tt.Find(label)
+		return ok && r.Y >= 0 && r.Y+r.H <= 676
+	}
+	if !inside("退出 Hibi") {
+		t.Fatalf("the toolbar is clipped")
+	}
+	tt.Scroll(panelWidth/2, 300, 0, 2000)
+	if !inside("简体中文") || !inside("退出 Hibi") {
+		t.Fatalf("the language switch is out of reach")
+	}
+}
+
 func TestPanelQuickAddAndShortcuts(t *testing.T) {
 	a, tt := newPanelTestApp(t)
 	if !tt.HasText("今天没有待办") {

@@ -29,7 +29,10 @@ func (a *app) panelView(c *ui.Context) {
 		a.headerView(c, p, data, timer)
 		rule(c, p, 1)
 		if a.showSettings {
-			a.settingsView(c, p)
+			// Taller than the panel may grow: it scrolls, as the list does.
+			ui.Scroll(c).Grow(1).MinHeight(0).MaxHeight(560).Children(func() {
+				a.settingsView(c, p)
+			})
 			a.toolbarView(c, p)
 			return
 		}
